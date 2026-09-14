@@ -1,0 +1,1486 @@
+{
+  "name": "Analyst Batches",
+  "nodes": [
+    {
+      "parameters": {
+        "url": "https://sentiment.democoncept.id/api/v1/keywords/next-to-scrap",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "User-Agent",
+              "value": "Mozilla/5.0 (X11; Linux x86_64; rv:134.0) Gecko/20100101 Firefox/134.0"
+            },
+            {
+              "name": "Accept",
+              "value": "*/*"
+            },
+            {
+              "name": "Accept-Language",
+              "value": "en-US,en;q=0.5"
+            },
+            {
+              "name": "Accept-Encoding",
+              "value": "gzip, deflate, br, zstd"
+            },
+            {
+              "name": "Referer",
+              "value": "https://sentiment.democoncept.id/q/swagger-ui/"
+            },
+            {
+              "name": "Connection",
+              "value": "keep-alive"
+            },
+            {
+              "name": "Sec-Fetch-Dest",
+              "value": "empty"
+            },
+            {
+              "name": "Sec-Fetch-Mode",
+              "value": "cors"
+            },
+            {
+              "name": "Sec-Fetch-Site",
+              "value": "same-origin"
+            },
+            {
+              "name": "DNT",
+              "value": "1"
+            },
+            {
+              "name": "Sec-GPC",
+              "value": "1"
+            },
+            {
+              "name": "Priority",
+              "value": "u=0"
+            },
+            {
+              "name": "TE",
+              "value": "trailers"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        480,
+        260
+      ],
+      "id": "eeff7c48-91ef-4ca6-b3ee-465086a4b763",
+      "name": "getNewKeyword"
+    },
+    {
+      "parameters": {
+        "rules": {
+          "values": [
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 2
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.platformList }}",
+                    "rightValue": "twitter",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "x"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 2
+                },
+                "conditions": [
+                  {
+                    "id": "577c49dc-0b2b-46d3-8e39-7a69ed2b9c4a",
+                    "leftValue": "={{ $json.platformList }}",
+                    "rightValue": "facebook",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals",
+                      "name": "filter.operator.equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "facebook"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 2
+                },
+                "conditions": [
+                  {
+                    "id": "4ff96de9-f217-4714-a4d4-90fecd4c5e6f",
+                    "leftValue": "={{ $json.platformList }}",
+                    "rightValue": "instagram",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals",
+                      "name": "filter.operator.equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "instagram"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 2
+                },
+                "conditions": [
+                  {
+                    "id": "b850f53d-f697-4f88-810e-2c9b125f0d2f",
+                    "leftValue": "={{ $json.platformList }}",
+                    "rightValue": "tiktok",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals",
+                      "name": "filter.operator.equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "tiktok"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3.2,
+      "position": [
+        1560,
+        160
+      ],
+      "id": "4d60a35d-2918-4fbe-bfb4-6538db9000b0",
+      "name": "checkPlatform"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://n8n.agoratechnosolution.id/webhook/x-batch",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "type",
+              "value": "search"
+            },
+            {
+              "name": "query",
+              "value": "={{ $json.message }} min_replies:20 -filter:replies"
+            },
+            {
+              "name": "max_tweets",
+              "value": "={{ 10 }}"
+            },
+            {
+              "name": "end_date",
+              "value": "={{ $json.scrapDateRange.startDate? `${$json.scrapDateRange.startDate}` : \"\" }}"
+            },
+            {
+              "name": "start_date",
+              "value": "={{ $json.scrapDateRange.endDate ?  $json.scrapDateRange.endDate: \"\"}}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1820,
+        -500
+      ],
+      "id": "c6963bd6-0ee4-4ccf-9200-8fac48b3c3fc",
+      "name": "callXScraper",
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "rMYMH9uiYm81zyFC",
+          "name": "xScraper"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "path": "e7b4bf6f-514f-487e-9f2d-04394cffd5db",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        240,
+        360
+      ],
+      "id": "d09f33d8-dcda-42b4-9c03-412357e30e49",
+      "name": "Webhook",
+      "webhookId": "e7b4bf6f-514f-487e-9f2d-04394cffd5db"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "1f1713d4-c138-4245-8500-29e57143fc5b",
+              "leftValue": "={{ $json.platformList }}",
+              "rightValue": "",
+              "operator": {
+                "type": "array",
+                "operation": "notEmpty",
+                "singleValue": true
+              }
+            },
+            {
+              "id": "4b5e11dd-3b01-4077-bf3e-95c3c27ca1da",
+              "leftValue": "={{ $json.status }}",
+              "rightValue": "KEYWORD",
+              "operator": {
+                "type": "string",
+                "operation": "equals",
+                "name": "filter.operator.equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        720,
+        260
+      ],
+      "id": "dbd761b2-aaf7-4b43-98ee-c97bb1ebdfef",
+      "name": "If1"
+    },
+    {
+      "parameters": {
+        "fieldToSplitOut": "platformList",
+        "include": "allOtherFields",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.splitOut",
+      "typeVersion": 1,
+      "position": [
+        1080,
+        240
+      ],
+      "id": "9bcf23bc-261c-46c4-83b8-ab3806966019",
+      "name": "Split Out"
+    },
+    {
+      "parameters": {
+        "jsCode": "// This code is for n8n's Function node\n// The input data is already at the tweets level: $input.first().json.tweets\n\n// Get the tweets array directly\nconst tweets = $input.first().json.body.tweets;\nconst outputTweets = [];\n\n// Process each main tweet\nif (tweets && Array.isArray(tweets)) {\n  tweets.forEach(tweet => {\n    // Combine thread content if this is a thread\n    let combinedText = tweet.normalized_text || tweet.original_text || \"\";\n    \n    if (tweet.is_thread && tweet.thread_tweets && Array.isArray(tweet.thread_tweets)) {\n      // Skip the first tweet if it's the same as the main tweet\n      const threadsToAdd = tweet.thread_tweets.filter(t => \n        t.tweet_id !== tweet.tweet_id\n      );\n      \n      // Add each thread text to the combined content\n      if (threadsToAdd.length > 0) {\n        combinedText += \"\\n\\n-- THREAD CONTINUATION --\\n\\n\";\n        combinedText += threadsToAdd\n          .map(t => t.original_text || \"\")\n          .join(\"\\n\\n-- NEXT THREAD PART --\\n\\n\");\n      }\n    }\n    \n    // Create a cleaned tweet object with combined thread content\n    const extractedTweet = {\n      tweet_id: tweet.tweet_id,\n      url: tweet.url,\n      original_text: tweet.original_text,\n      combined_text: combinedText, // Combined thread content\n      author_username: tweet.author?.username,\n      author_name: tweet.author?.name,\n      author_profile_picture: tweet.author?.profile_image,\n      media_url: tweet.media,\n      timestamp: tweet.timestamp,\n      metrics: {\n        reply_count: tweet.metrics?.reply_count || 0,\n        retweet_count: tweet.metrics?.retweet_count || 0,\n        like_count: tweet.metrics?.like_count || 0\n      },\n      is_thread: tweet.is_thread,\n      top_replies: []\n    };\n    \n    // Process top replies as a list\n    if (tweet.top_replies && Array.isArray(tweet.top_replies)) {\n      extractedTweet.top_replies = tweet.top_replies.map(replyTweet => ({\n        tweet_id: replyTweet.tweet_id,\n        url: replyTweet.url,\n        original_text: replyTweet.original_text,\n        normalized_text: replyTweet.normalized_text,\n        author_username: replyTweet.author?.username,\n        author_name: replyTweet.author?.name,\n        author_profile_picture: replyTweet.author?.profile_image,\n        media_url: replyTweet.media,\n        timestamp: replyTweet.timestamp,\n        metrics: {\n          reply_count: replyTweet.metrics?.reply_count || 0,\n          retweet_count: replyTweet.metrics?.retweet_count || 0,\n          like_count: replyTweet.metrics?.like_count || 0\n        }\n      }));\n    }\n    \n    outputTweets.push(extractedTweet);\n  });\n}\n\n// Return the extracted tweets as new items for n8n\n\nreturn outputTweets.map(tweet => ({json: tweet}));"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1780,
+        -1100
+      ],
+      "id": "6961762f-3d1c-4823-8669-fad3fe927704",
+      "name": "Code",
+      "alwaysOutputData": true,
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Loop over input items and add cleaned tweet data to each one\n\n  // Create a new item with the cleaned data\nconst cleanedData = cleanTweetData($input.first().json);\n  \nreturn cleanedData\n\n\nfunction cleanTweetData(inputJson) {\n  // Handle potential missing fields with defaults\n  const author_name = inputJson.author_name || '';\n  const author_username = inputJson.author_username || '';\n  const timestamp = inputJson.timestamp || new Date().toISOString();\n  const content = inputJson.combined_text;\n  const metrics = inputJson.metrics || { reply_count: 0, retweet_count: 0, like_count: 0 };\n  const top_replies = inputJson.top_replies || [];\n  \n  // Create main tweet object\n  const mainTweet = {\n    author: `${author_name} (@${author_username})`,\n    date: new Date(timestamp).toLocaleDateString('en-US', {\n      month: 'long',\n      day: 'numeric',\n      year: 'numeric'\n    }),\n    content: content,\n    metrics: {\n      replies: metrics.reply_count,\n      retweets: metrics.retweet_count,\n      likes: metrics.like_count\n    }\n  };\n  \n  // Process replies\n  const replies = top_replies.map(reply => ({\n    author: `${reply.author_name || ''} (@${reply.author_username || ''})`,\n    content: reply.original_text \n  }));\n  \n  // Create and return the final object\n  return {\n    main_tweet: mainTweet,\n    replies: replies\n  };\n}"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2780,
+        -940
+      ],
+      "id": "961594b5-7f73-4528-9437-6309be162cdd",
+      "name": "Code1"
+    },
+    {
+      "parameters": {
+        "options": {
+          "reset": false
+        }
+      },
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
+      "position": [
+        2460,
+        -740
+      ],
+      "id": "879fd69f-137b-4dcc-bc9d-37be38aa8a08",
+      "name": "Loop Over Items2",
+      "notesInFlow": true
+    },
+    {
+      "parameters": {
+        "promptType": "define",
+        "text": "={{ $json }}",
+        "hasOutputParser": true,
+        "options": {
+          "systemMessage": "You are an expert AI agent specialized in contextual sentiment analysis for Indonesian social media content. Your task is to analyze tweets, their threads, and replies while maintaining contextual relationships and providing comprehensive analysis in JSON format.\n\n## ANALYSIS COMPONENTS\n\n### 1. Sentiment Analysis:\n- Analyze sentiment the result must be either positive, negative, or neutral\n- Provide sentiment score (-1.0 to 1.0)\n- Identify key sentiment indicators/keywords in Indonesian\n- Consider contextual tone and cultural nuances\n\n### 2. Motivation Analysis:\n- Determine underlying motivation (informative, persuasive, criticizing, questioning, etc.)\n- Provide motivation confidence score (0.0 to 1.0)\n- Identify motivation indicators/keywords\n- Analyze intent patterns considering Indonesian political/social context\n\n### 3. Emotion Analysis:\n- Identify primary and secondary emotions\n- Provide emotion intensity score (0.0 to 1.0)\n- List emotion indicators/keywords\n- Consider emotional expressions unique to Indonesian language\n\n## CONTEXTUAL GUIDELINES\n\n### For Main Tweet:\n- Identify political alignments or references (if any)\n- Consider Indonesian social/political context\n- Recognize policy references and their implications\n- Identify slang, abbreviations, and cultural references\n\n### For Replies:\n- Analyze relationship to main tweet (supporting, opposing, questioning)\n- Consider common Indonesian response patterns\n- Identify new perspectives or arguments introduced\n- Evaluate interaction dynamics within Indonesian social media culture\n\n## OUTPUT FORMAT\n\n```json\n{\n  \"analysis_results\": {\n    \"main_tweet\": {\n      \"author\": \"string\",\n      \"content\": \"string\",\n      \"analysis\": {\n        \"context\": {\n          \"topic\": \"string\",\n          \"key_themes\": [\"string\"],\n          \"discussion_context\": \"string\"\n        },\n        \"sentiment\": {\n          \"label\": \"string\",\n          \"score\": float,\n          \"indicators\": [\"string\"]\n        },\n        \"motivation\": {\n          \"type\": \"string\",\n          \"confidence_score\": float,\n          \"indicators\": [\"string\"]\n        },\n        \"emotion\": {\n          \"primary\": \"string\",\n          \"secondary\": \"string\",\n          \"intensity\": float,\n          \"indicators\": [\"string\"]\n        }\n      }\n    },\n    \"replies_analysis\": [\n      {\n        \"author\": \"string\",\n        \"content\": \"string\",\n        \"analysis\": {\n          \"relationship_to_main\": \"string\",\n          \"sentiment\": {\n            \"label\": \"string\",\n            \"score\": float,\n            \"indicators\": [\"string\"]\n          },\n          \"motivation\": {\n            \"type\": \"string\",\n            \"confidence_score\": float,\n            \"indicators\": [\"string\"]\n          },\n          \"emotion\": {\n            \"primary\": \"string\",\n            \"secondary\": \"string\",\n            \"intensity\": float,\n            \"indicators\": [\"string\"]\n          }\n        }\n      }\n    ],\n    \"overall_conversation\": {\n      \"dominant_sentiment\": \"string\",\n      \"key_points_of_contention\": [\"string\"],\n      \"level_of_polarization\": \"string\",\n      \"summary\": \"string\"\n    }\n  }\n}"
+        }
+      },
+      "type": "@n8n/n8n-nodes-langchain.agent",
+      "typeVersion": 1.7,
+      "position": [
+        2920,
+        80
+      ],
+      "id": "a4168600-ebee-4585-8f2e-3d3245f169f4",
+      "name": "AI Agent",
+      "alwaysOutputData": true,
+      "retryOnFail": true,
+      "waitBetweenTries": 3000,
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "4498399f-4f6d-4235-9de3-3d06077bd571",
+              "leftValue": "={{ $json.output }}",
+              "rightValue": "",
+              "operator": {
+                "type": "object",
+                "operation": "exists",
+                "singleValue": true
+              }
+            },
+            {
+              "id": "94d78067-2aa4-4129-a776-3abec7c297e2",
+              "leftValue": "={{ $json.output.analysis_results }}",
+              "rightValue": "",
+              "operator": {
+                "type": "object",
+                "operation": "exists",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        3380,
+        120
+      ],
+      "id": "7a1ba15b-03eb-4531-b584-98ccf70b9dbf",
+      "name": "checkResult1"
+    },
+    {
+      "parameters": {
+        "schemaType": "manual",
+        "inputSchema": "{\n  \"analysis_results\": {\n    \"main_tweet\": {\n      \"author\": \"string\",\n      \"content\": \"string\",\n      \"analysis\": {\n        \"context\": {\n          \"topic\": \"string\",\n          \"key_themes\": [\"string\"],\n          \"discussion_context\": \"string\"\n        },\n        \"sentiment\": {\n          \"label\": \"string\",\n          \"score\": \"number\",\n          \"indicators\": [\"string\"]\n        },\n        \"motivation\": {\n          \"type\": \"string\",\n          \"confidence_score\": \"number\",\n          \"indicators\": [\"string\"]\n        },\n        \"emotion\": {\n          \"primary\": \"string\",\n          \"secondary\": \"string\",\n          \"intensity\": \"number\",\n          \"indicators\": [\"string\"]\n        }\n      }\n    },\n    \"replies_analysis\": [\n      {\n        \"author\": \"string\",\n        \"content\": \"string\",\n        \"analysis\": {\n          \"relationship_to_main\": \"string\",\n          \"sentiment\": {\n            \"label\": \"string\",\n            \"score\": \"number\",\n            \"indicators\": [\"string\"]\n          },\n          \"motivation\": {\n            \"type\": \"string\",\n            \"confidence_score\": \"number\",\n            \"indicators\": [\"string\"]\n          },\n          \"emotion\": {\n            \"primary\": \"string\",\n            \"secondary\": \"string\",\n            \"intensity\": \"number\",\n            \"indicators\": [\"string\"]\n          }\n        }\n      }\n    ],\n    \"overall_conversation\": {\n      \"dominant_sentiment\": \"string\",\n      \"key_points_of_contention\": [\"string\"],\n      \"level_of_polarization\": \"string\",\n      \"summary\": \"string\"\n    }\n  }\n}"
+      },
+      "type": "@n8n/n8n-nodes-langchain.outputParserStructured",
+      "typeVersion": 1.2,
+      "position": [
+        3180,
+        300
+      ],
+      "id": "b1848063-0ea0-4dc3-b6d6-dedaeed76c5c",
+      "name": "Formatting Response"
+    },
+    {
+      "parameters": {
+        "jsCode": "// For n8n, use this function with your specific input paths\nconst analysisResults = $input.first()?.json?.output?.analysis_results;\nconst tweetData = $('Loop Over Items2').first()?.json;\nconst result = transformTweetData(analysisResults, tweetData);\nreturn result;\n\n// Function to transform tweet data including replies\nfunction transformTweetData(analysisResults, tweetData) {\n  if (!analysisResults || !tweetData) return [];\n  \n  const mainTweetId = tweetData?.tweet_id;\n  const transformedData = [];\n  \n  // Transform main tweet\n  const mainTweet = {\n    postId: mainTweetId,\n    author: {\n      name: tweetData?.author_name,\n      username: \"@\" + tweetData?.author_username,\n      avatar: tweetData?.author_profile_picture,\n      platform: \"twitter\"\n    },\n    content: tweetData?.combined_text,\n    timestamp: tweetData?.timestamp,\n    engagement: {\n      likes: tweetData?.metrics?.like_count,\n      shares: tweetData?.metrics?.retweet_count,\n      comments: tweetData?.metrics?.reply_count\n    },\n    sentimentAnalysis: {\n      result: analysisResults?.main_tweet?.analysis?.sentiment?.label?.toUpperCase(),\n      score: analysisResults?.main_tweet?.analysis?.sentiment?.score,\n      indicators: analysisResults?.main_tweet?.analysis?.sentiment?.indicators\n    },\n    emotionAnalysis: {\n      primary: analysisResults?.main_tweet?.analysis?.emotion?.primary,\n      secondary: analysisResults?.main_tweet?.analysis?.emotion?.secondary,\n      intensity: analysisResults?.main_tweet?.analysis?.emotion?.intensity,\n      indicators: analysisResults?.main_tweet?.analysis?.emotion?.indicators\n    },\n    motivationAnalysis: {\n      type: analysisResults?.main_tweet?.analysis?.motivation?.type,\n      confidenceScore: analysisResults?.main_tweet?.analysis?.motivation?.confidence_score,\n      indicators: analysisResults?.main_tweet?.analysis?.motivation?.indicators\n    },\n    url: tweetData?.url,\n    mediaUrls: tweetData?.media_url,\n    location: null,\n    keyword: $('Webhook1').first().json.body.job_id.match(/^(.*?)min_replies/)[1].trim(),\n    original: tweetData?.original_text,\n    relatedPostId: null\n  };\n  \n  transformedData.push(mainTweet);\n\n  // Transform each reply\n  if (tweetData?.top_replies?.length > 0) {\n    for (let i = 0; i < tweetData.top_replies.length; i++) {\n      const reply = tweetData.top_replies[i];\n      const replyAnalysis = analysisResults?.replies_analysis?.[i];\n      \n      const transformedReply = {\n        postId: reply?.tweet_id,\n        author: {\n          name: reply?.author_name,\n          username: \"@\" + reply?.author_username,\n          avatar: reply?.author_profile_picture,\n          platform: \"twitter\"\n        },\n        content: reply?.normalized_text,\n        timestamp: reply?.timestamp,\n        engagement: {\n          likes: reply?.metrics?.like_count,\n          shares: reply?.metrics?.retweet_count,\n          comments: reply?.metrics?.reply_count\n        },\n        sentimentAnalysis: {\n          result: replyAnalysis?.analysis?.sentiment?.label?.toUpperCase(),\n          score: replyAnalysis?.analysis?.sentiment?.score,\n          indicators: replyAnalysis?.analysis?.sentiment?.indicators\n        },\n        emotionAnalysis: {\n          primary: replyAnalysis?.analysis?.emotion?.primary,\n          secondary: replyAnalysis?.analysis?.emotion?.secondary,\n          intensity: replyAnalysis?.analysis?.emotion?.intensity,\n          indicators: replyAnalysis?.analysis?.emotion?.indicators\n        },\n        motivationAnalysis: {\n          type: replyAnalysis?.analysis?.motivation?.type,\n          confidenceScore: replyAnalysis?.analysis?.motivation?.confidence_score,\n          indicators: replyAnalysis?.analysis?.motivation?.indicators\n        },\n        url: reply?.url,\n        mediaUrls: reply?.media_url,\n        location: null,\n        keyword:  $('Webhook1').first().json.body.job_id.match(/^(.*?)min_replies/)[1].trim(),\n        original: reply?.original_text,\n        relatedPostId: mainTweetId\n      };\n      \n      transformedData.push(transformedReply);\n    }\n  }\n  \n  return transformedData;\n}"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3600,
+        20
+      ],
+      "id": "a7786a20-ef52-4b35-82d3-05ccd317368c",
+      "name": "Code2"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "4498399f-4f6d-4235-9de3-3d06077bd571",
+              "leftValue": "={{ $json.postId }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "notEmpty",
+                "singleValue": true
+              }
+            },
+            {
+              "id": "94d78067-2aa4-4129-a776-3abec7c297e2",
+              "leftValue": "={{ $json.author.name }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "notEmpty",
+                "singleValue": true
+              }
+            },
+            {
+              "id": "1c940c8e-8548-4be1-96ab-8404157d0ed1",
+              "leftValue": "={{ $json.content }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "notEmpty",
+                "singleValue": true
+              }
+            },
+            {
+              "id": "17e552f1-d4a3-450c-88d3-7c77f253a332",
+              "leftValue": "={{ $json.sentimentAnalysis }}",
+              "rightValue": "",
+              "operator": {
+                "type": "object",
+                "operation": "notEmpty",
+                "singleValue": true
+              }
+            },
+            {
+              "id": "f0f0ccb9-d845-46a8-a2f2-2fca65fb23a4",
+              "leftValue": "={{ $json.emotionAnalysis }}",
+              "rightValue": "",
+              "operator": {
+                "type": "object",
+                "operation": "notEmpty",
+                "singleValue": true
+              }
+            },
+            {
+              "id": "eb2a582c-e7c9-4340-896b-277b7d7f4256",
+              "leftValue": "={{ $json.motivationAnalysis }}",
+              "rightValue": "",
+              "operator": {
+                "type": "object",
+                "operation": "notEmpty",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        3900,
+        20
+      ],
+      "id": "1dcfa755-6944-4540-b95e-d8bd515d6f92",
+      "name": "checkResult2"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://sentiment.democoncept.id/api/v1/sentiments",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "accept",
+              "value": "*/*"
+            }
+          ]
+        },
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "postId",
+              "value": "={{ $json.postId }}"
+            },
+            {
+              "name": "author",
+              "value": "={{ $json.author }}"
+            },
+            {
+              "name": "content",
+              "value": "={{ $json.content }}"
+            },
+            {
+              "name": "timestamp",
+              "value": "={{ $json.timestamp }}"
+            },
+            {
+              "name": "engagement",
+              "value": "={{ $json.engagement }}"
+            },
+            {
+              "name": "sentimentAnalysis",
+              "value": "={{ $json.sentimentAnalysis }}"
+            },
+            {
+              "name": "emotionAnalysis",
+              "value": "={{ $json.emotionAnalysis }}"
+            },
+            {
+              "name": "motivationAnalysis",
+              "value": "={{ $json.motivationAnalysis }}"
+            },
+            {
+              "name": "url",
+              "value": "={{ $json.url }}"
+            },
+            {
+              "name": "mediaUrls",
+              "value": "={{ $json.mediaUrls }}"
+            },
+            {
+              "name": "location",
+              "value": "={{ $json.location }}"
+            },
+            {
+              "name": "keyword",
+              "value": "={{ $json.keyword }}"
+            },
+            {
+              "name": "original",
+              "value": "={{ $json.original }}"
+            },
+            {
+              "name": "relatedPostId",
+              "value": "={{ $json.relatedPostId }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        4220,
+        -300
+      ],
+      "id": "742cea8b-e6ee-406f-8c2a-5e9b8764bcee",
+      "name": "HTTP Request2",
+      "alwaysOutputData": false,
+      "retryOnFail": true,
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "method": "PUT",
+        "url": "https://sentiment.democoncept.id/api/v1/keywords/finish",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "User-Agent",
+              "value": "Mozilla/5.0 (X11; Linux x86_64; rv:134.0) Gecko/20100101 Firefox/134.0"
+            },
+            {
+              "name": "Accept",
+              "value": "*/*"
+            },
+            {
+              "name": "Accept-Language",
+              "value": "en-US,en;q=0.5"
+            },
+            {
+              "name": "Accept-Encoding",
+              "value": "gzip, deflate, br, zstd"
+            },
+            {
+              "name": "Referer",
+              "value": "https://sentiment.democoncept.id/q/swagger-ui/"
+            },
+            {
+              "name": "Origin",
+              "value": "https://sentiment.democoncept.id"
+            },
+            {
+              "name": "Connection",
+              "value": "keep-alive"
+            },
+            {
+              "name": "Sec-Fetch-Dest",
+              "value": "empty"
+            },
+            {
+              "name": "Sec-Fetch-Mode",
+              "value": "cors"
+            },
+            {
+              "name": "Sec-Fetch-Site",
+              "value": "same-origin"
+            },
+            {
+              "name": "DNT",
+              "value": "1"
+            },
+            {
+              "name": "Sec-GPC",
+              "value": "1"
+            },
+            {
+              "name": "Priority",
+              "value": "u=0"
+            },
+            {
+              "name": "Content-Length",
+              "value": "0"
+            },
+            {
+              "name": "TE",
+              "value": "trailers"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        3560,
+        -640
+      ],
+      "id": "a815c16f-1b39-4c0b-a57c-5b2c60a512a0",
+      "name": "HTTP Request",
+      "alwaysOutputData": true,
+      "notesInFlow": true,
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "4498399f-4f6d-4235-9de3-3d06077bd571",
+              "leftValue": "={{ $json.tweet_id }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "exists",
+                "singleValue": true
+              }
+            },
+            {
+              "id": "94d78067-2aa4-4129-a776-3abec7c297e2",
+              "leftValue": "={{ $json.combined_text }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "exists",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        2180,
+        -500
+      ],
+      "id": "616ce404-9bc6-48db-a65b-e1976cfbb52e",
+      "name": "checkResult"
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "cleaning-sentiment/:batch",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        1400,
+        -860
+      ],
+      "id": "c2ab7d30-9a8c-4474-9b50-25b4dec31236",
+      "name": "Webhook1",
+      "webhookId": "e36aa46a-c6c5-441e-a93e-1ccc340875d4"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "4498399f-4f6d-4235-9de3-3d06077bd571",
+              "leftValue": "={{ $('Webhook1').item.json.body.batch_number }}",
+              "rightValue": "={{ $('Webhook1').item.json.body.total_batches }}",
+              "operator": {
+                "type": "number",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        2940,
+        -760
+      ],
+      "id": "45cf3b0f-1e52-43a4-99d7-8a27d23cd5d0",
+      "name": "checkResult3"
+    },
+    {
+      "parameters": {
+        "model": {
+          "__rl": true,
+          "value": "openai/gpt-oss-120b",
+          "mode": "list",
+          "cachedResultName": "openai/gpt-oss-120b"
+        },
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.lmChatOpenAi",
+      "typeVersion": 1.2,
+      "position": [
+        2880,
+        340
+      ],
+      "id": "a6d22613-9419-412b-9902-56262c1f3037",
+      "name": "OpenAI Chat Model",
+      "credentials": {
+        "openAiApi": {
+          "id": "yjNL6fquSy5JRGoY",
+          "name": "OpenAi account"
+        }
+      }
+    }
+  ],
+  "pinData": {
+    "getNewKeyword": [
+      {
+        "json": {
+          "status": "KEYWORD",
+          "message": "raja ampat",
+          "platformList": [
+            "twitter"
+          ],
+          "lastRun": "2025-03-04T01:29:40.831590Z",
+          "scrapDateRange": {
+            "startDate": "2025-02-14T17:00:00Z",
+            "endDate": "2025-03-02T17:00:00Z"
+          }
+        }
+      }
+    ],
+    "Webhook1": [
+      {
+        "json": {
+          "headers": {
+            "host": "n8n.agoratechnosolution.id",
+            "user-agent": "Python/3.9 aiohttp/3.11.13",
+            "content-length": "9933",
+            "accept": "*/*",
+            "accept-encoding": "gzip, deflate",
+            "content-type": "application/json",
+            "x-forwarded-for": "172.16.16.1",
+            "x-forwarded-host": "n8n.agoratechnosolution.id",
+            "x-forwarded-proto": "https"
+          },
+          "params": {
+            "batch": "10"
+          },
+          "query": {},
+          "body": {
+            "job_id": "pertamax min_replies:20 -filter:replies_20250307_071110",
+            "batch_number": 10,
+            "total_batches": 10,
+            "tweets": [
+              {
+                "tweet_id": "1896866841248895148",
+                "url": "https://twitter.com/PngAdilnR4kyt/status/1896866841248895148",
+                "original_text": "MAMPUSSS...\n\nTERLALU BANYAK PENJAHAT DI NEGERI INI...\n\nRAJA MINYAK RIZA CHALID TAMAT...\n\nSKANDAL KOR...",
+                "normalized_text": "MAMPUSSS... TERLALU BANYAK PENJAHAT DI NEGERI INI... RAJA MINYAK RIZA CHALID TAMAT... SKANDAL KORUPSI PERTAMAX OPLOSAN RP. 968 TRILIUN TERUNGKAP....",
+                "author": {
+                  "username": "Pengadilan Rakyat",
+                  "name": "Pengadilan Rakyat",
+                  "verified": false,
+                  "profile_image": "https://pbs.twimg.com/profile_images/1631783329547837440/TNmqVRFR_normal.jpg"
+                },
+                "timestamp": "2025-03-04T10:14:31.000Z",
+                "metrics": {
+                  "reply_count": 63,
+                  "retweet_count": 304,
+                  "like_count": 587
+                },
+                "media": [],
+                "is_thread": false,
+                "thread_tweets": [
+                  {
+                    "tweet_id": "1896866841248895148",
+                    "url": "https://twitter.com/PngAdilnR4kyt/status/1896866841248895148",
+                    "original_text": "MAMPUSSS...\n\nTERLALU BANYAK PENJAHAT DI NEGERI INI...\n\nRAJA MINYAK RIZA CHALID TAMAT...\n\nSKANDAL KOR...",
+                    "normalized_text": "MAMPUSSS... TERLALU BANYAK PENJAHAT DI NEGERI INI... RAJA MINYAK RIZA CHALID TAMAT... SKANDAL KORUPSI PERTAMAX OPLOSAN RP. 968 TRILIUN TERUNGKAP....",
+                    "author": {
+                      "username": "Pengadilan Rakyat",
+                      "name": "Pengadilan Rakyat",
+                      "verified": false,
+                      "profile_image": "https://pbs.twimg.com/profile_images/1631783329547837440/TNmqVRFR_normal.jpg"
+                    },
+                    "timestamp": "2025-03-04T10:14:31.000Z",
+                    "metrics": {
+                      "reply_count": 63,
+                      "retweet_count": 304,
+                      "like_count": 587
+                    },
+                    "media": [],
+                    "is_thread": false,
+                    "thread_tweets": [],
+                    "top_replies": []
+                  }
+                ],
+                "top_replies": [
+                  {
+                    "tweet_id": "1896984168686637347",
+                    "url": "https://twitter.com/josc716/status/1896984168686637347",
+                    "original_text": "Raja minyak...? Raja maling kali...",
+                    "normalized_text": "Raja minyak...? Raja maling kali...",
+                    "author": {
+                      "username": "Wiro 212",
+                      "name": "Wiro 212",
+                      "verified": false,
+                      "profile_image": "https://pbs.twimg.com/profile_images/673877392062996481/jC9UmDSs_normal.jpg"
+                    },
+                    "timestamp": "2025-03-04T18:00:44.000Z",
+                    "metrics": {
+                      "reply_count": 0,
+                      "retweet_count": 0,
+                      "like_count": 0
+                    },
+                    "media": [],
+                    "is_thread": false,
+                    "thread_tweets": [],
+                    "top_replies": []
+                  },
+                  {
+                    "tweet_id": "1896921535174279524",
+                    "url": "https://twitter.com/hirotakenz48158/status/1896921535174279524",
+                    "original_text": "Kenapa negeri ini menjadi Negari nya para koruptor ya ?????    #PeoplePowerBasmiKoruptor",
+                    "normalized_text": "Kenapa negeri ini menjadi Negari nya para koruptor ya ?????",
+                    "author": {
+                      "username": "hirotakenzo",
+                      "name": "hirotakenzo",
+                      "verified": false,
+                      "profile_image": "https://pbs.twimg.com/profile_images/1875942712052228096/aSoAFkBg_normal.jpg"
+                    },
+                    "timestamp": "2025-03-04T13:51:51.000Z",
+                    "metrics": {
+                      "reply_count": 0,
+                      "retweet_count": 0,
+                      "like_count": 1
+                    },
+                    "media": [],
+                    "is_thread": false,
+                    "thread_tweets": [],
+                    "top_replies": []
+                  },
+                  {
+                    "tweet_id": "1897086518940111029",
+                    "url": "https://twitter.com/soetanbandaro/status/1897086518940111029",
+                    "original_text": "Kenapa orang tidak pernah lihat sewaktu pileg dan pilpres RC menyumbang ke siapa aja? Bisa jadi ini ...",
+                    "normalized_text": "Kenapa orang tidak pernah lihat sewaktu pileg dan pilpres RC menyumbang ke siapa aja? Bisa jadi ini aja ganti pemain atau merubah pola.",
+                    "author": {
+                      "username": "St Bandaro",
+                      "name": "St Bandaro",
+                      "verified": false,
+                      "profile_image": "https://pbs.twimg.com/profile_images/1177946661206679552/TYI02yTn_normal.jpg"
+                    },
+                    "timestamp": "2025-03-05T00:47:26.000Z",
+                    "metrics": {
+                      "reply_count": 0,
+                      "retweet_count": 0,
+                      "like_count": 0
+                    },
+                    "media": [],
+                    "is_thread": false,
+                    "thread_tweets": [],
+                    "top_replies": []
+                  }
+                ]
+              },
+              {
+                "tweet_id": "1896866002149011512",
+                "url": "https://twitter.com/axdwin/status/1896866002149011512",
+                "original_text": "Gila²an\n\nEmas palsu udah\nPertamax palsu udah\n\nApalagi?\n\nAkhir zaman guys... Pegangan yang kenceng ",
+                "normalized_text": "Gila²an Emas palsu udah Pertamax palsu udah Apalagi? Akhir zaman guys... Pegangan yang kenceng",
+                "author": {
+                  "username": "Axdwin ",
+                  "name": "Axdwin Indonesia ",
+                  "verified": false,
+                  "profile_image": "https://pbs.twimg.com/profile_images/1757786119381688320/GMlyDN-5_normal.jpg"
+                },
+                "timestamp": "2025-03-04T10:11:11.000Z",
+                "metrics": {
+                  "reply_count": 25,
+                  "retweet_count": 17,
+                  "like_count": 69
+                },
+                "media": [],
+                "is_thread": true,
+                "thread_tweets": [
+                  {
+                    "tweet_id": "1896866002149011512",
+                    "url": "https://twitter.com/axdwin/status/1896866002149011512",
+                    "original_text": "Gila²an\n\nEmas palsu udah\nPertamax palsu udah\n\nApalagi?\n\nAkhir zaman guys... Pegangan yang kenceng ",
+                    "normalized_text": "Gila²an Emas palsu udah Pertamax palsu udah Apalagi? Akhir zaman guys... Pegangan yang kenceng",
+                    "author": {
+                      "username": "Axdwin ",
+                      "name": "Axdwin Indonesia ",
+                      "verified": false,
+                      "profile_image": "https://pbs.twimg.com/profile_images/1757786119381688320/GMlyDN-5_normal.jpg"
+                    },
+                    "timestamp": "2025-03-04T04:00:00.000Z",
+                    "metrics": {
+                      "reply_count": 25,
+                      "retweet_count": 17,
+                      "like_count": 69
+                    },
+                    "media": [],
+                    "is_thread": false,
+                    "thread_tweets": [],
+                    "top_replies": []
+                  },
+                  {
+                    "tweet_id": "1897025390453063917",
+                    "url": "https://twitter.com/axdwin/status/1897025390453063917",
+                    "original_text": "",
+                    "normalized_text": "",
+                    "author": {
+                      "username": "Axdwin ",
+                      "name": "Axdwin Indonesia ",
+                      "verified": false,
+                      "profile_image": "https://pbs.twimg.com/profile_images/1757786119381688320/GMlyDN-5_normal.jpg"
+                    },
+                    "timestamp": "2025-03-04T20:44:32.000Z",
+                    "metrics": {
+                      "reply_count": 0,
+                      "retweet_count": 0,
+                      "like_count": 2
+                    },
+                    "media": [],
+                    "is_thread": false,
+                    "thread_tweets": [],
+                    "top_replies": []
+                  },
+                  {
+                    "tweet_id": "1897025485672210928",
+                    "url": "https://twitter.com/axdwin/status/1897025485672210928",
+                    "original_text": "Alhamdulillâh aman Mas Bro",
+                    "normalized_text": "Alhamdulillâh aman Mas Bro",
+                    "author": {
+                      "username": "Axdwin ",
+                      "name": "Axdwin Indonesia ",
+                      "verified": false,
+                      "profile_image": "https://pbs.twimg.com/profile_images/1757786119381688320/GMlyDN-5_normal.jpg"
+                    },
+                    "timestamp": "2025-03-04T20:44:55.000Z",
+                    "metrics": {
+                      "reply_count": 1,
+                      "retweet_count": 0,
+                      "like_count": 1
+                    },
+                    "media": [],
+                    "is_thread": false,
+                    "thread_tweets": [],
+                    "top_replies": []
+                  },
+                  {
+                    "tweet_id": "1897284447004975172",
+                    "url": "https://twitter.com/axdwin/status/1897284447004975172",
+                    "original_text": "Parahh",
+                    "normalized_text": "Parahh",
+                    "author": {
+                      "username": "Axdwin ",
+                      "name": "Axdwin Indonesia ",
+                      "verified": false,
+                      "profile_image": "https://pbs.twimg.com/profile_images/1757786119381688320/GMlyDN-5_normal.jpg"
+                    },
+                    "timestamp": "2025-03-05T13:53:56.000Z",
+                    "metrics": {
+                      "reply_count": 0,
+                      "retweet_count": 0,
+                      "like_count": 0
+                    },
+                    "media": [],
+                    "is_thread": false,
+                    "thread_tweets": [],
+                    "top_replies": []
+                  },
+                  {
+                    "tweet_id": "1897036527282344398",
+                    "url": "https://twitter.com/axdwin/status/1897036527282344398",
+                    "original_text": "Placu",
+                    "normalized_text": "Placu",
+                    "author": {
+                      "username": "Axdwin ",
+                      "name": "Axdwin Indonesia ",
+                      "verified": false,
+                      "profile_image": "https://pbs.twimg.com/profile_images/1757786119381688320/GMlyDN-5_normal.jpg"
+                    },
+                    "timestamp": "2025-03-04T21:28:47.000Z",
+                    "metrics": {
+                      "reply_count": 0,
+                      "retweet_count": 0,
+                      "like_count": 1
+                    },
+                    "media": [],
+                    "is_thread": false,
+                    "thread_tweets": [],
+                    "top_replies": []
+                  },
+                  {
+                    "tweet_id": "1896867261295788404",
+                    "url": "https://twitter.com/axdwin/status/1896867261295788404",
+                    "original_text": "Ok Tks Kak",
+                    "normalized_text": "Ok Tks Kak",
+                    "author": {
+                      "username": "Axdwin ",
+                      "name": "Axdwin Indonesia ",
+                      "verified": false,
+                      "profile_image": "https://pbs.twimg.com/profile_images/1757786119381688320/GMlyDN-5_normal.jpg"
+                    },
+                    "timestamp": "2025-03-04T10:16:11.000Z",
+                    "metrics": {
+                      "reply_count": 1,
+                      "retweet_count": 0,
+                      "like_count": 0
+                    },
+                    "media": [],
+                    "is_thread": false,
+                    "thread_tweets": [],
+                    "top_replies": []
+                  }
+                ],
+                "top_replies": [
+                  {
+                    "tweet_id": "1896953889448165787",
+                    "url": "https://twitter.com/Daniess_73/status/1896953889448165787",
+                    "original_text": "Biang keladinya ijazah palsu,kemenangan palsu,jadi merembet serba palsu!",
+                    "normalized_text": "Biang keladinya ijazah palsu,kemenangan palsu,jadi merembet serba palsu!",
+                    "author": {
+                      "username": "Danie73",
+                      "name": "Danie73",
+                      "verified": false,
+                      "profile_image": "https://pbs.twimg.com/profile_images/1696065046114357248/LIPZG5X4_normal.png"
+                    },
+                    "timestamp": "2025-03-04T16:00:25.000Z",
+                    "metrics": {
+                      "reply_count": 0,
+                      "retweet_count": 0,
+                      "like_count": 0
+                    },
+                    "media": [],
+                    "is_thread": false,
+                    "thread_tweets": [],
+                    "top_replies": []
+                  },
+                  {
+                    "tweet_id": "1896978630087221255",
+                    "url": "https://twitter.com/MardiantoMamay/status/1896978630087221255",
+                    "original_text": "Akhir zaman kian dekat, semoga kita pegangan iman kita.\nAamiin",
+                    "normalized_text": "Akhir zaman kian dekat, semoga kita pegangan iman kita. Aamiin",
+                    "author": {
+                      "username": "mamay mardianto",
+                      "name": "mamay mardianto",
+                      "verified": false,
+                      "profile_image": "https://pbs.twimg.com/profile_images/1896244497543000064/o8GmBOku_normal.jpg"
+                    },
+                    "timestamp": "2025-03-04T17:38:44.000Z",
+                    "metrics": {
+                      "reply_count": 0,
+                      "retweet_count": 0,
+                      "like_count": 0
+                    },
+                    "media": [],
+                    "is_thread": false,
+                    "thread_tweets": [],
+                    "top_replies": []
+                  },
+                  {
+                    "tweet_id": "1897125600554553784",
+                    "url": "https://twitter.com/Raefidyan2/status/1897125600554553784",
+                    "original_text": "duit cuman sarana sementara aja.",
+                    "normalized_text": "duit cuman sarana sementara aja.",
+                    "author": {
+                      "username": "raefidyan (رايفديان)",
+                      "name": "raefidyan (رايفديان)",
+                      "verified": false,
+                      "profile_image": "https://pbs.twimg.com/profile_images/1817170760458543105/lx9VbhNJ_normal.jpg"
+                    },
+                    "timestamp": "2025-03-05T03:22:44.000Z",
+                    "metrics": {
+                      "reply_count": 1,
+                      "retweet_count": 0,
+                      "like_count": 0
+                    },
+                    "media": [],
+                    "is_thread": false,
+                    "thread_tweets": [],
+                    "top_replies": []
+                  }
+                ]
+              }
+            ],
+            "status": {
+              "query": "pertamax min_replies:20 -filter:replies",
+              "max_tweets": 20,
+              "batch_size": 2,
+              "status": "in_progress",
+              "start_time": "2025-03-07T07:11:10.548381",
+              "last_batch": 10,
+              "total_tweets_processed": 20,
+              "error": null
+            }
+          },
+          "webhookUrl": "http://localhost:5678/webhook/e36aa46a-c6c5-441e-a93e-1ccc340875d4/cleaning-sentiment/:batch",
+          "executionMode": "production"
+        }
+      }
+    ]
+  },
+  "connections": {
+    "getNewKeyword": {
+      "main": [
+        [
+          {
+            "node": "If1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "checkPlatform": {
+      "main": [
+        [
+          {
+            "node": "callXScraper",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "HTTP Request",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "HTTP Request",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "HTTP Request",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "callXScraper": {
+      "main": [
+        []
+      ]
+    },
+    "Webhook": {
+      "main": [
+        [
+          {
+            "node": "getNewKeyword",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "If1": {
+      "main": [
+        [
+          {
+            "node": "Split Out",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        []
+      ]
+    },
+    "Split Out": {
+      "main": [
+        [
+          {
+            "node": "checkPlatform",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code": {
+      "main": [
+        [
+          {
+            "node": "checkResult",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "checkResult3",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code1": {
+      "main": [
+        [
+          {
+            "node": "AI Agent",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Loop Over Items2": {
+      "main": [
+        [
+          {
+            "node": "checkResult3",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Code1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "AI Agent": {
+      "main": [
+        [
+          {
+            "node": "checkResult1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Formatting Response": {
+      "ai_outputParser": [
+        [
+          {
+            "node": "AI Agent",
+            "type": "ai_outputParser",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "checkResult1": {
+      "main": [
+        [
+          {
+            "node": "Code2",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Loop Over Items2",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code2": {
+      "main": [
+        [
+          {
+            "node": "checkResult2",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "checkResult2": {
+      "main": [
+        [
+          {
+            "node": "HTTP Request2",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Loop Over Items2",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HTTP Request2": {
+      "main": [
+        [
+          {
+            "node": "Loop Over Items2",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "checkResult": {
+      "main": [
+        [
+          {
+            "node": "Loop Over Items2",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "checkResult3",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Webhook1": {
+      "main": [
+        [
+          {
+            "node": "Code",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "checkResult3": {
+      "main": [
+        []
+      ]
+    },
+    "OpenAI Chat Model": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "AI Agent",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "0090e5d3-75f4-4dd7-94d7-801934a79b9c",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "1d968dd5761f86b9df91da4209a09ecd7cd641d6db01aed536417a3b7130cbe9"
+  },
+  "id": "t4jhhHyLzh8HtfEu",
+  "tags": []
+}

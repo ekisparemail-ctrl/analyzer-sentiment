@@ -1,0 +1,47 @@
+sequenceDiagram
+    autonumber
+    actor User
+    participant Sentiment as Sentiment Backend
+    participant Scrapper as Scrapper Backend
+    participant Apify
+    participant Analytics as Analytics Backend
+
+    User->>Sentiment: Input keywords to scrape
+    Sentiment-->>User: Keywords saved
+
+    loop Periodic schedule check
+        activate Scrapper
+        Scrapper->>Sentiment: Fetch keywords due for scraping
+        activate Sentiment
+        Sentiment-->>Scrapper: Return keyword list
+        deactivate Sentiment
+
+        alt Schedule is due
+            Scrapper->>Apify: Request scrape for keyword(s)
+            activate Apify
+            Apify-->>Scrapper: Return raw scrape results
+            deactivate Apify
+
+            Note over Scrapper: Normalize raw results
+
+            loop For each normalized result
+                Scrapper->>Analytics: Send single normalized result
+                activate Analytics
+                Note over Analytics: Analyze with VLM + LLM
+                Analytics-->>Scrapper: Return normalized sentiment result
+                deactivate Analytics
+            end
+
+            Note over Scrapper: Compile all analyzed results
+
+            loop For each compiled result
+                Scrapper->>Sentiment: Store final sentiment result
+                activate Sentiment
+                Sentiment-->>Scrapper: Acknowledge stored
+                deactivate Sentiment
+            end
+        else Schedule not due
+            Scrapper-->>Scrapper: Wait for next cycle
+        end
+        deactivate Scrapper
+    end
