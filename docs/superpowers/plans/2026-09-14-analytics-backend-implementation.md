@@ -2,26 +2,26 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Build the Analytics Backend: a Python service that consumes text/video items from Kafka, produces a video summary (via an in-process MLX video analyzer + LLM), runs sentiment/emotion/motivation analysis via an LLM, and publishes the result back to Kafka — one item at a time.
+**Goal:** Build the Analytics Backend: a Python service that consumes text/video items from Kafka, produces a video summary (via a video analyzer that extracts frames locally and calls a remote VLM, plus local CPU speech transcription, then an LLM pass), runs sentiment/emotion/motivation analysis via an LLM, and publishes the result back to Kafka — one item at a time.
 
-**Architecture:** A single Python process wired from `main.py`: a Kafka consumer reads one `AnalysisRequest` at a time, `pipeline.analyze()` orchestrates optional video download + in-process MLX video analysis + LLM summarization + LLM sentiment analysis (all through dependency-injected callables for testability), and a Kafka producer publishes the resulting `AnalysisResult` before the offset is committed. No Docker — the process runs natively on a Mac Studio because the video analyzer depends on Apple-Silicon-only MLX.
+**Architecture:** A single Python process wired from `main.py`: a Kafka consumer reads one `AnalysisRequest` at a time, `pipeline.analyze()` orchestrates optional video download + video analysis (local `ffmpeg` frame extraction + a remote VLM HTTP call + local `faster-whisper` transcription) + LLM summarization + LLM sentiment analysis (all through dependency-injected callables for testability), and a Kafka producer publishes the resulting `AnalysisResult` before the offset is committed. The service runs on a local Windows machine — separate from the Mac Studio that hosts the LLM (LM Studio) and VLM — so it has no in-process MLX dependency, and is packaged as a Docker image.
 
-**Tech Stack:** Python 3.11+, pydantic v2 + pydantic-settings, httpx (LLM/VLM HTTP clients), confluent-kafka, yt-dlp, mlx-vlm + mlx-whisper (macOS-only, lazy-imported), pytest + respx + ruff + mypy.
+**Tech Stack:** Python 3.11+, pydantic v2 + pydantic-settings, httpx (LLM/VLM HTTP clients), confluent-kafka, yt-dlp, ffmpeg/ffprobe (system binaries, frame extraction), faster-whisper (local CPU transcription), pytest + respx + ruff + mypy.
 
 **Spec:** `docs/superpowers/specs/2026-09-14-analytics-backend-design.md`
 
 ## Global Constraints
 
 - Python 3.11+ (spec §4, §7).
-- No Docker: the full service runs as a native Python process on a Mac Studio — `video/analyzer.py` depends on Apple-Silicon-only MLX, which Docker Desktop on macOS cannot GPU-accelerate (spec §8).
+- **Revised mid-implementation (after Task 5):** this service runs on a local Windows machine, not the Mac Studio. `video/analyzer.py` has no in-process MLX dependency — it extracts video frames locally via `ffmpeg`, calls a remote VLM over HTTP (via `ai/vlm_client.py`) for the summary, and runs `faster-whisper` locally on CPU for the transcript. Docker is a viable deployment target again (spec §8); `ffmpeg` must be present on PATH / in the container image.
 - Kafka bootstrap servers come from env var `KAFKA_BOOTSTRAP_SERVERS` (current environment value: `172.16.16.100:21000`) — never hardcoded in source (spec §9).
-- LLM is accessed via an OpenAI-compatible HTTP endpoint (LM Studio) — config-driven base URL + model name, not hardcoded (spec §4).
-- `ai/vlm_client.py` is built per spec §4's component list but is **not** wired into `pipeline.analyze()` in v1 — the endpoint and its exact role are still an open decision (spec §9). Do not call it from the pipeline.
+- LLM is accessed via an OpenAI-compatible HTTP endpoint (LM Studio, on the Mac Studio) — config-driven base URL + model name, not hardcoded (spec §4).
+- `ai/vlm_client.py` is built per spec §4's component list. **Revised:** it is now actively used by `video/analyzer.py`'s summary step (see Task 4) — it is not wired directly into `pipeline.analyze()` itself, but it is no longer dead/unused code. Its target VLM endpoint mechanism on the Mac Studio is still undecided by devops (spec §9) — only the configured base URL should need to change once confirmed.
 - All functions carry type hints; data models use pydantic — no implicit `any`, no unchecked casts (Acme Types standard).
 - `pytest`, `ruff`, and `mypy` must all pass before any task is considered done (Acme Testing standard).
 - New logic requires tests in the same PR; bug fixes require a regression test that fails before the fix and passes after (Acme Testing standard).
 - Never commit directly to main/master (Acme Review standard) — this plan assumes commits happen on a feature branch.
-- `video/analyzer.py`'s `load_models()` (real mlx-vlm/mlx-whisper calls) is **not** unit tested for real — it requires Apple Silicon hardware and multi-GB model weights (spec §7). Everything else in `video/analyzer.py` is fully unit tested via dependency injection.
+- `video/analyzer.py`'s `load_models()` loads a real local `faster-whisper` model — not exercised in unit tests (real model weights, slow to load; spec §7), but it requires no special hardware (CPU-only, runs on this Windows machine). Everything else in `video/analyzer.py`, and all of `video/frames.py`, is fully unit tested via dependency injection / mocked subprocess calls.
 
 ---
 
@@ -41,6 +41,8 @@
 
 **Interfaces:**
 - Produces: `Settings` (pydantic-settings `BaseSettings` subclass) in `src/config.py`, with fields: `kafka_bootstrap_servers: str`, `kafka_request_topic: str = "analytics.requests"`, `kafka_response_topic: str = "analytics.results"`, `kafka_consumer_group: str = "analytics-backend"`, `llm_base_url: str`, `llm_model: str`, `vlm_base_url: str | None = None`, `vlm_model: str | None = None`, `vlm_model_id: str = "mlx-community/Qwen2.5-VL-7B-Instruct-4bit"`, `whisper_model_id: str = "mlx-community/whisper-large-v3-turbo"`, `max_frames: int = 32`, `max_tokens: int = 500`, `http_timeout_seconds: float = 30.0`, `retry_attempts: int = 3`, `retry_backoff_seconds: float = 1.0`.
+
+**Superseded by a later architecture correction (see Task 4):** `vlm_model_id` and `whisper_model_id` above referred to local MLX model identifiers, which no longer apply now that the service runs on a Windows host with no in-process MLX dependency. Task 4's rework amends `Settings` to drop `vlm_model_id` (the VLM is now reached only via the existing `vlm_base_url`/`vlm_model` fields, through `ai/vlm_client.py`) and replaces `whisper_model_id` with `whisper_model_size: str = "base"` (a `faster-whisper` model size/name, not an MLX Hugging Face repo id — chosen small by default since this host is CPU-only). `max_frames`/`max_tokens` are unaffected. This note documents the amendment for anyone reading Task 1 in isolation; the authoritative field list is in Task 4.
 
 - [ ] **Step 1: Create the dependency and tool-config files**
 
@@ -510,210 +512,332 @@ git commit -m "feat: add yt-dlp video downloader"
 
 ---
 
-## Task 4: Video Analyzer (adapted from `docs/references/server.py`)
+## Task 4: Video Analyzer (adapted from `docs/references/server.py`) — REWORKED
+
+> **This task supersedes an earlier version already implemented and committed** (commit range `016452b..4f67d28` on this branch), which loaded `mlx-vlm`/`mlx-whisper` in-process. That version was built on the incorrect assumption that this service runs on the Mac Studio. It was clarified afterward that this service runs on a **local Windows machine**, and MLX cannot run there under any circumstance (Apple-Silicon-only, no Windows build, Docker cannot change the host's real CPU architecture). This reworked task keeps `VideoAnalysisError`, `VideoAnalysis`, `AnalyzerModels`, and `analyze_video()` **exactly as already implemented and approved** (do not change their code or tests) and replaces only `load_models()`'s implementation, plus adds a new `video/frames.py` module and amends `Settings`/`requirements.txt`.
 
 **Files:**
-- Create: `src/video/analyzer.py`
-- Test: `tests/video/test_analyzer.py`
+- Modify: `requirements.txt` (remove the `mlx-vlm`/`mlx-whisper` lines, add `faster-whisper`)
+- Modify: `src/config.py` (remove `vlm_model_id`, replace `whisper_model_id` with `whisper_model_size`)
+- Modify: `tests/test_config.py` (update the two assertions/env references for the renamed/removed fields)
+- Modify: `.env.example` (update the corresponding env var lines — see Step 8b)
+- Create: `src/video/frames.py`
+- Test: `tests/video/test_frames.py`
+- Modify: `src/video/analyzer.py` (replace `load_models()`'s body only — leave `VideoAnalysisError`, `VideoAnalysis`, `AnalyzerModels`, `analyze_video()` untouched)
+- Do NOT modify: `tests/video/test_analyzer.py` — its 4 existing tests are re-run (unchanged) in Step 12 to confirm `analyze_video()`'s behavior is unaffected by this rework.
 
 **Interfaces:**
-- Consumes: nothing project-specific at the `analyze_video` level (takes an `AnalyzerModels` built by `load_models`, which is not exercised in tests — see Global Constraints).
-- Produces: `VideoAnalysisError(Exception)`, `VideoAnalysis` (dataclass: `summary: str`, `transcript: str | None`, `transcript_segments: list[dict] | None`), `AnalyzerModels` (dataclass: `generate_summary: Callable[[str, str, int, int], str]`, `transcribe: Callable[[str], tuple[str, list[dict]]]`), `load_models(vlm_model_id: str, whisper_model_id: str) -> AnalyzerModels`, `analyze_video(models: AnalyzerModels, video_path: str, prompt: str, max_frames: int, max_tokens: int, include_transcript: bool) -> VideoAnalysis`.
+- Consumes: `VLMConfig`, `describe_images` from `ai/vlm_client.py` (Task 6, already built: `describe_images(config: VLMConfig, prompt: str, image_data_urls: list[str]) -> str`).
+- Produces: `FrameExtractionError(Exception)`, `extract_frames(video_path: str, max_frames: int) -> list[str]` (both in `src/video/frames.py`); a new `load_models(vlm_config: VLMConfig, whisper_model_size: str) -> AnalyzerModels` in `src/video/analyzer.py`, replacing the old signature — `AnalyzerModels`, `analyze_video()`, `VideoAnalysis`, `VideoAnalysisError` keep their existing shapes unchanged from the already-approved implementation.
 
-This module adapts `docs/references/server.py`'s `_run_vlm_on_video` and `_run_transcription` functions. The FastAPI/pydantic upload layer is dropped (our caller supplies a local file path from `video/downloader.py` instead). Per spec §4, `AnalyzerModels` wraps the loaded mlx-vlm/mlx-whisper state as plain callables so `analyze_video` never touches `mlx_vlm`/`mlx_whisper` directly — this is what makes `analyze_video` fully unit-testable on any platform, including non-macOS dev machines, without mocking `sys.modules`.
+### Part A: `src/video/frames.py`
+
+Extracts evenly-spaced JPEG frames from a video via `ffmpeg`/`ffprobe` (system binaries — must be on PATH; see Global Constraints), returned as base64 `data:` URLs ready for `ai/vlm_client.py`'s `describe_images()`.
 
 - [ ] **Step 1: Write the failing tests**
 
-`tests/video/test_analyzer.py`:
+`tests/video/test_frames.py`:
 ```python
+import json
+import subprocess
+from unittest.mock import MagicMock
+
 import pytest
 
-from video.analyzer import AnalyzerModels, VideoAnalysisError, analyze_video
+from video.frames import FrameExtractionError, extract_frames
 
 
-def _models(
-    generate_summary=None,
-    transcribe=None,
-) -> AnalyzerModels:
-    return AnalyzerModels(
-        generate_summary=generate_summary or (lambda path, prompt, max_frames, max_tokens: "a summary"),
-        transcribe=transcribe or (lambda path: ("a transcript", [{"start": 0.0, "end": 1.0, "text": "hi"}])),
-    )
+def _fake_run_factory(frame_count: int):
+    def _fake_run(cmd, check, capture_output, text=False):
+        if cmd[0] == "ffprobe":
+            return MagicMock(stdout=json.dumps({"format": {"duration": "10.0"}}), returncode=0)
+        if cmd[0] == "ffmpeg":
+            pattern = cmd[-1]
+            frames_dir = pattern.rsplit("\\", 1)[0] if "\\" in pattern else pattern.rsplit("/", 1)[0]
+            import os
+
+            for i in range(frame_count):
+                with open(os.path.join(frames_dir, f"frame-{i:03d}.jpg"), "wb") as f:
+                    f.write(b"\xff\xd8\xff\xe0fakejpeg")
+            return MagicMock(returncode=0)
+        raise AssertionError(f"unexpected command: {cmd}")
+
+    return _fake_run
 
 
-def test_analyze_video_returns_summary_and_transcript_when_requested() -> None:
-    models = _models()
+def test_extract_frames_returns_base64_data_urls(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr("video.frames.subprocess.run", _fake_run_factory(3))
 
-    result = analyze_video(
-        models, "/tmp/video.mp4", "Describe what is happening.", max_frames=32, max_tokens=500,
-        include_transcript=True,
-    )
+    result = extract_frames("/tmp/video.mp4", max_frames=5)
 
-    assert result.summary == "a summary"
-    assert result.transcript == "a transcript"
-    assert result.transcript_segments == [{"start": 0.0, "end": 1.0, "text": "hi"}]
+    assert len(result) == 3
+    for url in result:
+        assert url.startswith("data:image/jpeg;base64,")
 
 
-def test_analyze_video_skips_transcript_when_not_requested() -> None:
-    transcribe_calls = []
+def test_extract_frames_caps_at_max_frames(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr("video.frames.subprocess.run", _fake_run_factory(10))
 
-    def transcribe(path: str) -> tuple[str, list[dict]]:
-        transcribe_calls.append(path)
-        return "a transcript", []
+    result = extract_frames("/tmp/video.mp4", max_frames=4)
 
-    models = _models(transcribe=transcribe)
-
-    result = analyze_video(
-        models, "/tmp/video.mp4", "Describe what is happening.", max_frames=32, max_tokens=500,
-        include_transcript=False,
-    )
-
-    assert result.transcript is None
-    assert result.transcript_segments is None
-    assert transcribe_calls == []
+    assert len(result) == 4
 
 
-def test_analyze_video_raises_video_analysis_error_when_vlm_call_fails() -> None:
-    def broken_generate_summary(path: str, prompt: str, max_frames: int, max_tokens: int) -> str:
-        raise RuntimeError("out of memory")
+def test_extract_frames_raises_on_ffprobe_failure(monkeypatch: pytest.MonkeyPatch) -> None:
+    def broken_run(cmd, check, capture_output, text=False):
+        raise subprocess.CalledProcessError(1, cmd)
 
-    models = _models(generate_summary=broken_generate_summary)
+    monkeypatch.setattr("video.frames.subprocess.run", broken_run)
 
-    with pytest.raises(VideoAnalysisError, match="out of memory"):
-        analyze_video(
-            models, "/tmp/video.mp4", "Describe what is happening.", max_frames=32, max_tokens=500,
-            include_transcript=True,
-        )
+    with pytest.raises(FrameExtractionError):
+        extract_frames("/tmp/video.mp4", max_frames=5)
 
 
-def test_analyze_video_degrades_gracefully_when_only_transcription_fails() -> None:
-    def broken_transcribe(path: str) -> tuple[str, list[dict]]:
-        raise RuntimeError("whisper crashed")
+def test_extract_frames_raises_when_ffmpeg_produces_no_frames(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr("video.frames.subprocess.run", _fake_run_factory(0))
 
-    models = _models(transcribe=broken_transcribe)
-
-    result = analyze_video(
-        models, "/tmp/video.mp4", "Describe what is happening.", max_frames=32, max_tokens=500,
-        include_transcript=True,
-    )
-
-    assert result.summary == "a summary"
-    assert result.transcript is None
-    assert result.transcript_segments is None
+    with pytest.raises(FrameExtractionError, match="no frames"):
+        extract_frames("/tmp/video.mp4", max_frames=5)
 ```
 
 - [ ] **Step 2: Run the tests to verify they fail**
 
-Run: `pytest tests/video/test_analyzer.py -v`
-Expected: FAIL — `ModuleNotFoundError: No module named 'video.analyzer'`.
+Run: `pytest tests/video/test_frames.py -v`
+Expected: FAIL — `ModuleNotFoundError: No module named 'video.frames'`.
 
-- [ ] **Step 3: Implement `src/video/analyzer.py`**
+- [ ] **Step 3: Implement `src/video/frames.py`**
 
 ```python
-from collections.abc import Callable
-from dataclasses import dataclass
+import base64
+import json
+import os
+import subprocess
+import tempfile
 
 
-class VideoAnalysisError(Exception):
+class FrameExtractionError(Exception):
     pass
 
 
-@dataclass
-class VideoAnalysis:
-    summary: str
-    transcript: str | None
-    transcript_segments: list[dict] | None
-
-
-@dataclass
-class AnalyzerModels:
-    # (video_path, prompt, max_frames, max_tokens) -> summary text
-    generate_summary: Callable[[str, str, int, int], str]
-    # (video_path) -> (transcript text, transcript segments)
-    transcribe: Callable[[str], tuple[str, list[dict]]]
-
-
-def load_models(vlm_model_id: str, whisper_model_id: str) -> AnalyzerModels:
+def extract_frames(video_path: str, max_frames: int) -> list[str]:
     """
-    Loads the mlx-vlm and mlx-whisper models once and returns them wrapped as plain
-    callables. Requires macOS on Apple Silicon with mlx-vlm/mlx-whisper installed —
-    not exercised in unit tests (see plan Global Constraints / spec section 7).
+    Extracts up to `max_frames` JPEG frames, evenly spaced across the video's
+    duration, using ffmpeg/ffprobe, and returns them as base64-encoded
+    data: URLs suitable for an OpenAI-compatible vision chat completion request.
     """
-    import mlx_vlm
-    import mlx_whisper
-    from mlx_vlm.prompt_utils import apply_chat_template
-    from mlx_vlm.utils import load_config
+    duration = _probe_duration_seconds(video_path)
+    fps = max_frames / duration if duration > 0 else 1.0
 
-    model, processor = mlx_vlm.load(vlm_model_id)
-    config = load_config(vlm_model_id)
-
-    def generate_summary(video_path: str, prompt: str, max_frames: int, max_tokens: int) -> str:
-        formatted_prompt = apply_chat_template(processor, config, prompt, num_images=0)
-        output = mlx_vlm.generate(
-            model,
-            processor,
-            formatted_prompt,
-            video=video_path,
-            max_tokens=max_tokens,
-            max_frames=max_frames,
-            temperature=0.0,
-        )
-        return getattr(output, "text", output)
-
-    def transcribe(video_path: str) -> tuple[str, list[dict]]:
-        result = mlx_whisper.transcribe(
-            video_path, path_or_hf_repo=whisper_model_id, word_timestamps=False
-        )
-        segments = [
-            {"start": s["start"], "end": s["end"], "text": s["text"].strip()}
-            for s in result.get("segments", [])
-        ]
-        return result["text"].strip(), segments
-
-    return AnalyzerModels(generate_summary=generate_summary, transcribe=transcribe)
-
-
-def analyze_video(
-    models: AnalyzerModels,
-    video_path: str,
-    prompt: str,
-    max_frames: int,
-    max_tokens: int,
-    include_transcript: bool,
-) -> VideoAnalysis:
-    try:
-        summary = models.generate_summary(video_path, prompt, max_frames, max_tokens)
-    except Exception as e:
-        raise VideoAnalysisError(f"VLM analysis failed: {e}") from e
-
-    transcript: str | None = None
-    transcript_segments: list[dict] | None = None
-    if include_transcript:
+    with tempfile.TemporaryDirectory() as frames_dir:
+        pattern = os.path.join(frames_dir, "frame-%03d.jpg")
         try:
-            transcript, transcript_segments = models.transcribe(video_path)
-        except Exception:
-            # Transcription is supplementary to the VLM summary; don't fail the
-            # whole video analysis over it (spec section 6).
-            transcript, transcript_segments = None, None
+            subprocess.run(
+                [
+                    "ffmpeg",
+                    "-y",
+                    "-i",
+                    video_path,
+                    "-vf",
+                    f"fps={fps}",
+                    "-frames:v",
+                    str(max_frames),
+                    pattern,
+                ],
+                check=True,
+                capture_output=True,
+            )
+        except (subprocess.CalledProcessError, OSError) as e:
+            raise FrameExtractionError(f"ffmpeg frame extraction failed: {e}") from e
 
-    return VideoAnalysis(summary=summary, transcript=transcript, transcript_segments=transcript_segments)
+        frame_files = sorted(os.listdir(frames_dir))[:max_frames]
+        if not frame_files:
+            raise FrameExtractionError("ffmpeg produced no frames")
+
+        data_urls = []
+        for filename in frame_files:
+            with open(os.path.join(frames_dir, filename), "rb") as f:
+                encoded = base64.b64encode(f.read()).decode("ascii")
+            data_urls.append(f"data:image/jpeg;base64,{encoded}")
+        return data_urls
+
+
+def _probe_duration_seconds(video_path: str) -> float:
+    try:
+        result = subprocess.run(
+            [
+                "ffprobe",
+                "-v",
+                "error",
+                "-show_entries",
+                "format=duration",
+                "-of",
+                "json",
+                video_path,
+            ],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        data = json.loads(result.stdout)
+        return float(data["format"]["duration"])
+    except (subprocess.CalledProcessError, OSError, KeyError, ValueError, json.JSONDecodeError) as e:
+        raise FrameExtractionError(f"ffprobe duration probe failed: {e}") from e
 ```
 
 - [ ] **Step 4: Run the tests to verify they pass**
 
-Run: `pytest tests/video/test_analyzer.py -v`
+Run: `pytest tests/video/test_frames.py -v`
 Expected: PASS (4 tests).
 
 - [ ] **Step 5: Run ruff and mypy**
 
 Run: `ruff check . && mypy src`
-Expected: no errors. (`mypy` will not attempt to resolve the `mlx_vlm`/`mlx_whisper` imports at the top of `load_models` on non-macOS; if it errors on missing stubs, add `# type: ignore[import-untyped]` to those two import lines rather than installing the packages.)
+Expected: no errors.
 
-- [ ] **Step 6: Commit**
+### Part B: amend `Settings` and `requirements.txt`
+
+- [ ] **Step 6: Update `requirements.txt`**
+
+Remove these two lines:
+```
+mlx-vlm>=0.1.0; sys_platform == "darwin"
+mlx-whisper>=0.4.0; sys_platform == "darwin"
+```
+Add this line in their place:
+```
+faster-whisper>=1.0,<2
+```
+
+- [ ] **Step 7: Install the new dependency**
+
+Run: `pip install -r requirements.txt` (using the existing `.venv`)
+
+- [ ] **Step 8: Update `src/config.py`**
+
+In the `Settings` class, remove the `vlm_model_id` field entirely, and replace:
+```python
+    whisper_model_id: str = "mlx-community/whisper-large-v3-turbo"
+```
+with:
+```python
+    whisper_model_size: str = "base"
+```
+Leave every other field unchanged (`vlm_base_url`, `vlm_model`, `max_frames`, `max_tokens`, etc. all stay).
+
+- [ ] **Step 8b: Update `.env.example`**
+
+Replace:
+```
+# In-process video analyzer (mlx-vlm / mlx-whisper model ids)
+VLM_MODEL_ID=mlx-community/Qwen2.5-VL-7B-Instruct-4bit
+WHISPER_MODEL_ID=mlx-community/whisper-large-v3-turbo
+MAX_FRAMES=32
+MAX_TOKENS=500
+```
+with:
+```
+# Video analyzer (local ffmpeg frame extraction + faster-whisper transcription;
+# VLM calls for the summary go through VLM_BASE_URL/VLM_MODEL above)
+WHISPER_MODEL_SIZE=base
+MAX_FRAMES=32
+MAX_TOKENS=500
+```
+Also update the comment above `VLM_BASE_URL`/`VLM_MODEL` (currently "not wired into the pipeline yet, see spec section 9") to: `# VLM (external, OpenAI-compatible) - used by video/analyzer.py for video summaries; endpoint mechanism on the Mac Studio still TBD by devops, see spec section 9`.
+
+- [ ] **Step 9: Update `tests/test_config.py`**
+
+In `test_settings_loads_required_and_applies_defaults`, replace:
+```python
+    assert settings.vlm_model_id == "mlx-community/Qwen2.5-VL-7B-Instruct-4bit"
+    assert settings.whisper_model_id == "mlx-community/whisper-large-v3-turbo"
+```
+with:
+```python
+    assert settings.whisper_model_size == "base"
+```
+
+- [ ] **Step 10: Run the config tests to verify they still pass**
+
+Run: `pytest tests/test_config.py -v`
+Expected: PASS (2 tests).
+
+### Part C: replace `load_models()` in `src/video/analyzer.py`
+
+Leave the existing `VideoAnalysisError`, `VideoAnalysis`, `AnalyzerModels` dataclasses, and `analyze_video()` function exactly as they are (already implemented, already tested, already approved). Replace only the `load_models()` function and its imports.
+
+- [ ] **Step 11: Replace `load_models()`**
+
+Remove the old `load_models()` function (the one that does `import mlx_vlm` / `import mlx_whisper`) and its now-unused imports at the top of the file, and replace with:
+
+```python
+def load_models(vlm_config: VLMConfig, whisper_model_size: str) -> AnalyzerModels:
+    """
+    Loads the local faster-whisper model once (CPU — this host has no GPU) and
+    builds a generate_summary callable that extracts frames locally and sends
+    them to a remote VLM. The whisper load is real and requires no special
+    hardware, but is still not exercised in unit tests (real model weights,
+    slow to load; see plan Global Constraints).
+    """
+    from faster_whisper import WhisperModel
+
+    from ai.vlm_client import describe_images
+    from video.frames import extract_frames
+
+    whisper_model = WhisperModel(whisper_model_size, device="cpu")
+
+    def generate_summary(video_path: str, prompt: str, max_frames: int, max_tokens: int) -> str:
+        # max_tokens is part of AnalyzerModels.generate_summary's shared shape;
+        # describe_images has no token-cap parameter, so it's unused here.
+        frames = extract_frames(video_path, max_frames)
+        return describe_images(vlm_config, prompt, frames)
+
+    def transcribe(video_path: str) -> tuple[str, list[dict]]:
+        segments_iter, _info = whisper_model.transcribe(video_path, word_timestamps=False)
+        texts = []
+        segments = []
+        for s in segments_iter:
+            text = s.text.strip()
+            texts.append(text)
+            segments.append({"start": s.start, "end": s.end, "text": text})
+        return " ".join(texts).strip(), segments
+
+    return AnalyzerModels(generate_summary=generate_summary, transcribe=transcribe)
+```
+
+Add this import near the top of the file, alongside the existing `from collections.abc import Callable` / `from dataclasses import dataclass` lines:
+```python
+from ai.vlm_client import VLMConfig
+```
+(This one is safe as a top-level import — `ai.vlm_client` has no platform-specific dependency, unlike the old `mlx_vlm`/`mlx_whisper` imports it replaces. Only `faster_whisper`, `ai.vlm_client.describe_images`, and `video.frames.extract_frames` need to stay as lazy imports inside `load_models()`, matching the file's existing pattern of keeping heavy/optional dependencies out of module-level imports.)
+
+- [ ] **Step 12: Run the full test suite to verify nothing broke**
+
+Run: `pytest -v`
+Expected: PASS, same count as before this task plus the 4 new `test_frames.py` tests (the 4 existing `test_analyzer.py` tests must still pass unchanged, since `analyze_video()` itself was not touched).
+
+- [ ] **Step 13: Run ruff and mypy**
+
+Run: `ruff check . && mypy src`
+Expected: no errors. (If mypy flags the `faster_whisper` import inside `load_models()` for missing stubs, add `# type: ignore[import-untyped]` to that line — `faster-whisper` is a real installed dependency, unlike the old `mlx_vlm`/`mlx_whisper` case, so confirm the exact mypy error code before picking the ignore code, the same way Task 3 and Task 4's original version each had to.)
+
+- [ ] **Step 14: Commit**
 
 ```bash
-git add src/video/analyzer.py tests/video/test_analyzer.py
-git commit -m "feat: adapt server.py's mlx-vlm/mlx-whisper logic into an in-process video analyzer"
+git add requirements.txt src/config.py tests/test_config.py .env.example src/video/frames.py tests/video/test_frames.py src/video/analyzer.py
+git commit -m "$(cat <<'EOF'
+fix: rework video analyzer for a Windows host with a remote VLM
+
+This service runs on a local Windows machine, not the Mac Studio, so
+video/analyzer.py cannot load mlx-vlm/mlx-whisper in-process (MLX is
+Apple-Silicon-only). load_models() now loads a local faster-whisper
+model (CPU) for transcription, and its generate_summary callable
+extracts frames locally via the new video/frames.py (ffmpeg) and sends
+them to the VLM hosted on the Mac Studio over HTTP via the existing
+ai/vlm_client.py. analyze_video()'s public behavior is unchanged.
+
+Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
+EOF
+)"
 ```
 
 ---
@@ -1626,10 +1750,10 @@ git commit -m "feat: add Kafka request consumer"
 - Test: `tests/test_main.py`
 
 **Interfaces:**
-- Consumes: `Settings` from `config.py` (Task 1); `AnalyzeDependencies`, `analyze` from `pipeline/analyze.py` (Task 7); `download_video` from `video/downloader.py` (Task 3); `load_models`, `analyze_video` from `video/analyzer.py` (Task 4); `LLMConfig`, `summarize_video`, `analyze_sentiment` from `ai/llm_client.py` (Task 5); `KafkaRequestConsumer` from `messaging/consumer.py` (Task 9); `KafkaResultProducer` from `messaging/producer.py` (Task 8).
+- Consumes: `Settings` from `config.py` (Task 1); `AnalyzeDependencies`, `analyze` from `pipeline/analyze.py` (Task 7); `download_video` from `video/downloader.py` (Task 3); `load_models`, `analyze_video` from `video/analyzer.py` (Task 4, reworked); `VLMConfig` from `ai/vlm_client.py` (Task 6); `LLMConfig`, `summarize_video`, `analyze_sentiment` from `ai/llm_client.py` (Task 5); `KafkaRequestConsumer` from `messaging/consumer.py` (Task 9); `KafkaResultProducer` from `messaging/producer.py` (Task 8).
 - Produces: `build_dependencies(settings: Settings) -> AnalyzeDependencies`, `run_once(consumer: KafkaRequestConsumer, producer: KafkaResultProducer, deps: AnalyzeDependencies, poll_timeout: float = 1.0) -> bool`, `main() -> None`.
 
-`build_dependencies()` calls `load_models()`, which requires real Apple Silicon hardware — it is not exercised in unit tests (Global Constraints). `run_once()` contains all the testable orchestration logic and is fully covered here with fake consumer/producer/deps.
+`build_dependencies()` calls `load_models()`, which loads a real local `faster-whisper` model — not exercised in unit tests (real model weights, slow; Global Constraints), but requires no special hardware. `run_once()` contains all the testable orchestration logic and is fully covered here with fake consumer/producer/deps.
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -1699,6 +1823,7 @@ Expected: FAIL — `ModuleNotFoundError: No module named 'main'`.
 from functools import partial
 
 from ai.llm_client import LLMConfig, analyze_sentiment, summarize_video
+from ai.vlm_client import VLMConfig
 from config import Settings
 from messaging.consumer import KafkaRequestConsumer
 from messaging.producer import KafkaResultProducer
@@ -1709,10 +1834,12 @@ from video.downloader import download_video
 
 def build_dependencies(settings: Settings) -> AnalyzeDependencies:
     """
-    Loads the in-process VLM/Whisper models once. Requires real Apple Silicon
-    hardware -- not exercised in unit tests (see plan Global Constraints).
+    Loads the local faster-whisper model once. Requires no special hardware
+    (CPU-only) but is not exercised in unit tests (real model weights, slow to
+    load; see plan Global Constraints).
     """
-    analyzer_models = load_models(settings.vlm_model_id, settings.whisper_model_id)
+    vlm_config = VLMConfig(base_url=settings.vlm_base_url or "", model=settings.vlm_model or "")
+    analyzer_models = load_models(vlm_config, settings.whisper_model_size)
     llm_config = LLMConfig(
         base_url=settings.llm_base_url,
         model=settings.llm_model,
@@ -1782,5 +1909,7 @@ git commit -m "feat: wire Kafka consumer/producer to the pipeline in main entryp
 
 ## Post-Plan Notes (not implementation tasks)
 
-- Running for real on the Mac Studio: `python -m venv .venv && .venv/bin/pip install -r requirements.txt && .venv/bin/python src/main.py`, with a real `.env` (copy from `.env.example`) loaded into the process environment (e.g. via `set -a; source .env; set +a` before running, or a process supervisor's env config — `Settings` reads from `os.environ`, it does not load `.env` itself).
-- The two open items flagged in spec §9 (`ai/vlm_client.py`'s role, and the exact Kafka topic contract) are intentionally not resolved by this plan — they need a follow-up decision once the Scrapper Backend contract and the sentiment step's VLM requirement are clarified, at which point a small follow-up task (wiring `ai/vlm_client.py` into `pipeline/analyze.py`, and/or adjusting `schemas.py`'s field names) can be added without touching the rest of the codebase, since both are isolated behind their own modules.
+- **This service runs on the local Windows machine, not the Mac Studio** (revised after Task 5 — see Global Constraints and Task 4's rework note). The Mac Studio hosts LM Studio (LLM) and, once devops decides how, the VLM — both reached over the network from this service.
+- Running locally for development: `python -m venv .venv && .venv\Scripts\pip install -r requirements.txt && .venv\Scripts\python src\main.py` (Windows), with a real `.env` (copy from `.env.example`) loaded into the process environment — `Settings` reads from `os.environ`, it does not load `.env` itself. `ffmpeg`/`ffprobe` must be installed and on PATH (not a pip package).
+- **Docker packaging** was deliberately left out of this plan's task list (no Task creates a Dockerfile) even though the spec now calls for it (spec §8, revised) — this plan focused on getting the service correct and tested first. Writing the Dockerfile (Python base image + `apt-get install ffmpeg`, copy `src/`, install `requirements.txt`, `CMD ["python", "src/main.py"]`) is a small, independent follow-up once Task 10 is complete and verified; it doesn't require its own spec/plan cycle.
+- The remaining open items flagged in spec §9 (the VLM's exact hosting mechanism on the Mac Studio, and the exact Kafka topic contract) are intentionally not resolved by this plan — they need a follow-up decision once devops and the Scrapper Backend developer confirm their sides. If the VLM turns out not to be OpenAI-compatible, `ai/vlm_client.py` (and therefore `video/analyzer.py`'s `load_models()`) will need rework, isolated to those two files.
