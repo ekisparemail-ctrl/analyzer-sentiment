@@ -1,6 +1,8 @@
 from collections.abc import Callable
 from dataclasses import dataclass
 
+from ai.vlm_client import VLMConfig
+
 
 class VideoAnalysisError(Exception):
     pass
@@ -21,43 +23,36 @@ class AnalyzerModels:
     transcribe: Callable[[str], tuple[str, list[dict]]]
 
 
-def load_models(vlm_model_id: str, whisper_model_id: str) -> AnalyzerModels:
+def load_models(vlm_config: VLMConfig, whisper_model_size: str) -> AnalyzerModels:
     """
-    Loads the mlx-vlm and mlx-whisper models once and returns them wrapped as plain
-    callables. Requires macOS on Apple Silicon with mlx-vlm/mlx-whisper installed —
-    not exercised in unit tests (see plan Global Constraints / spec section 7).
+    Loads the local faster-whisper model once (CPU — this host has no GPU) and
+    builds a generate_summary callable that extracts frames locally and sends
+    them to a remote VLM. The whisper load is real and requires no special
+    hardware, but is still not exercised in unit tests (real model weights,
+    slow to load; see plan Global Constraints).
     """
-    import mlx_vlm  # type: ignore[import-not-found]
-    import mlx_whisper  # type: ignore[import-not-found]
-    from mlx_vlm.prompt_utils import apply_chat_template  # type: ignore[import-not-found]
-    from mlx_vlm.utils import load_config  # type: ignore[import-not-found]
+    from faster_whisper import WhisperModel  # type: ignore[import-untyped]
 
-    model, processor = mlx_vlm.load(vlm_model_id)
-    config = load_config(vlm_model_id)
+    from ai.vlm_client import describe_images
+    from video.frames import extract_frames
+
+    whisper_model = WhisperModel(whisper_model_size, device="cpu")
 
     def generate_summary(video_path: str, prompt: str, max_frames: int, max_tokens: int) -> str:
-        formatted_prompt = apply_chat_template(processor, config, prompt, num_images=0)
-        output = mlx_vlm.generate(
-            model,
-            processor,
-            formatted_prompt,
-            video=video_path,
-            max_tokens=max_tokens,
-            max_frames=max_frames,
-            temperature=0.0,
-        )
-        text = getattr(output, "text", output)
-        return str(text)
+        # max_tokens is part of AnalyzerModels.generate_summary's shared shape;
+        # describe_images has no token-cap parameter, so it's unused here.
+        frames = extract_frames(video_path, max_frames)
+        return describe_images(vlm_config, prompt, frames)
 
     def transcribe(video_path: str) -> tuple[str, list[dict]]:
-        result = mlx_whisper.transcribe(
-            video_path, path_or_hf_repo=whisper_model_id, word_timestamps=False
-        )
-        segments = [
-            {"start": s["start"], "end": s["end"], "text": s["text"].strip()}
-            for s in result.get("segments", [])
-        ]
-        return result["text"].strip(), segments
+        segments_iter, _info = whisper_model.transcribe(video_path, word_timestamps=False)
+        texts = []
+        segments = []
+        for s in segments_iter:
+            text = s.text.strip()
+            texts.append(text)
+            segments.append({"start": s.start, "end": s.end, "text": text})
+        return " ".join(texts).strip(), segments
 
     return AnalyzerModels(generate_summary=generate_summary, transcribe=transcribe)
 

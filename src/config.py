@@ -17,8 +17,7 @@ class Settings(BaseSettings):
     vlm_base_url: str | None = None
     vlm_model: str | None = None
 
-    vlm_model_id: str = "mlx-community/Qwen2.5-VL-7B-Instruct-4bit"
-    whisper_model_id: str = "mlx-community/whisper-large-v3-turbo"
+    whisper_model_size: str = "base"
     max_frames: int = 32
     max_tokens: int = 500
 

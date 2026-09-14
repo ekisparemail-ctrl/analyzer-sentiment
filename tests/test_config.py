@@ -18,8 +18,7 @@ def test_settings_loads_required_and_applies_defaults(monkeypatch: pytest.Monkey
     assert settings.kafka_response_topic == "analytics.results"
     assert settings.kafka_consumer_group == "analytics-backend"
     assert settings.vlm_base_url is None
-    assert settings.vlm_model_id == "mlx-community/Qwen2.5-VL-7B-Instruct-4bit"
-    assert settings.whisper_model_id == "mlx-community/whisper-large-v3-turbo"
+    assert settings.whisper_model_size == "base"
     assert settings.max_frames == 32
     assert settings.max_tokens == 500
     assert settings.http_timeout_seconds == 30.0
