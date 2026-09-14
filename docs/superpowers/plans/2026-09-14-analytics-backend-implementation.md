@@ -311,19 +311,19 @@ Expected: FAIL — `ModuleNotFoundError: No module named 'schemas'`.
 - [ ] **Step 3: Implement `src/schemas.py`**
 
 ```python
-from enum import Enum
+from enum import StrEnum
 
 from pydantic import BaseModel, Field
 
 
-class Platform(str, Enum):
+class Platform(StrEnum):
     TWITTER = "twitter"
     TIKTOK = "tiktok"
     INSTAGRAM = "instagram"
     FACEBOOK = "facebook"
 
 
-class Status(str, Enum):
+class Status(StrEnum):
     OK = "ok"
     PARTIAL = "partial"
     FAILED = "failed"
