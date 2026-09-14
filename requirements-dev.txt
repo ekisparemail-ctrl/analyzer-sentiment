@@ -1,0 +1,6 @@
+-r requirements.txt
+pytest>=8.2,<9
+pytest-mock>=3.14,<4
+respx>=0.21,<1
+ruff>=0.5,<1
+mypy>=1.10,<2
