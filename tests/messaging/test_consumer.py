@@ -68,6 +68,20 @@ def test_poll_request_returns_none_on_kafka_level_error(monkeypatch: pytest.Monk
     fake_consumer_instance.commit.assert_not_called()
 
 
+def test_poll_request_commits_when_msg_value_is_none(monkeypatch: pytest.MonkeyPatch) -> None:
+    consumer, fake_consumer_instance = _make_consumer(monkeypatch)
+
+    fake_msg = MagicMock()
+    fake_msg.error.return_value = None
+    fake_msg.value.return_value = None
+    fake_consumer_instance.poll.return_value = fake_msg
+
+    result = consumer.poll_request(1.0)
+
+    assert result is None
+    fake_consumer_instance.commit.assert_called_once_with(fake_msg)
+
+
 def test_commit_delegates_to_underlying_consumer(monkeypatch: pytest.MonkeyPatch) -> None:
     consumer, fake_consumer_instance = _make_consumer(monkeypatch)
     fake_msg = MagicMock()
