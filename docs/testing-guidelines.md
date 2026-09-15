@@ -376,6 +376,17 @@ Sebelum menjalankan pengujian manual ini, pastikan semua ini tersedia:
    tidak sengaja ketinggalan dari testing lokal. Kalau memang salah alamat,
    `poll()` akan retry tanpa henti (perilaku normal, bukan bug) dan hanya
    terlihat lewat log mentah `rdkafka#...FAIL` yang cukup teknis.
+
+   **Gejala berbeda yang perlu dibedakan:** kalau baris `Starting Analytics
+   Backend (kafka_bootstrap_servers=...)` sudah menunjukkan alamat broker
+   yang **benar**, tapi baris `FAIL` di bawahnya tetap menyebut alamat
+   **lain** (mis. `localhost:9092`/`127.0.0.1:9092`) — terutama kalau itu
+   muncul untuk `GroupCoordinator` DAN untuk producer sekaligus — itu bukan
+   masalah `.env`/konfigurasi kita sama sekali. Itu artinya broker Kafka
+   itu sendiri meng-advertise alamat yang salah ke semua client (klasik
+   `advertised.listeners` broker ter-set ke `localhost`, bukan alamat yang
+   benar-benar reachable) — laporkan ke devops/pengelola Kafka-nya, bukan
+   diutak-atik di sisi project ini.
    Menghentikan service dengan Ctrl-C akan shutdown bersih (log "Received
    interrupt signal, shutting down gracefully." lalu keluar), bukan
    menampilkan traceback mentah.
