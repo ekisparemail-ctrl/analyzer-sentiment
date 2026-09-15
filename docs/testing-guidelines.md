@@ -264,3 +264,177 @@ pytest -v && ruff check . && mypy src
 `docs/references/server.py` (file referensi dari supervisor, bukan kode yang kita
 tulis) sengaja dikecualikan dari `ruff check .` lewat `extend-exclude = ["docs/"]` di
 `pyproject.toml` — jangan format ulang file itu, dan jangan hapus exclude-nya.
+
+## Pengujian End-to-End (manual)
+
+Test otomatis di `tests/` sengaja **tidak** menyentuh Kafka, VLM, LLM, atau model
+whisper yang sungguhan (lihat spec §2 "Out of scope": *"End-to-end integration tests
+against a real Kafka cluster or the real remote VLM endpoint"*). Semua boundary itu
+di-mock. Karena itu, verifikasi bahwa seluruh alur benar-benar nyambung ujung-ke-ujung
+harus dilakukan manual terhadap infrastruktur asli, mengikuti langkah di bawah.
+
+### Alur yang diuji
+
+```
+Scrapper BE                Analytics Backend (project ini)              Mac Studio
+    │                              │                                        │
+    │ 1. publish request           │                                        │
+    │   (Kafka: topic request)     │                                        │
+    ├─────────────────────────────►│                                        │
+    │                              │ 2. consumer.poll_request()             │
+    │                              │    -> AnalysisRequest                  │
+    │                              │                                        │
+    │                              │ 3. jika video_url ada:                 │
+    │                              │    a. download_video() (yt-dlp)        │
+    │                              │    b. extract_frames() (ffmpeg, lokal) │
+    │                              │    c. describe_images() ───────────────┤──► VLM (HTTP)
+    │                              │       (ai/vlm_client.py)               │
+    │                              │◄────────────────────────────────────────┤ summary
+    │                              │    d. transcribe() (faster-whisper,    │
+    │                              │       lokal, CPU)                      │
+    │                              │                                        │
+    │                              │ 4. summarize_video() ──────────────────┤──► LLM (HTTP,
+    │                              │    (ai/llm_client.py)                  │     LM Studio)
+    │                              │◄────────────────────────────────────────┤ video_summary
+    │                              │                                        │
+    │                              │ 5. gabungkan text + video_summary,     │
+    │                              │    analyze_sentiment() ────────────────┤──► LLM (HTTP)
+    │                              │◄────────────────────────────────────────┤ sentiment/
+    │                              │                                        │  emotion/motivation
+    │                              │ 6. producer.publish(AnalysisResult)    │
+    │  7. consume hasil            │    lalu consumer.commit(msg)           │
+    │   (Kafka: topic response)    │                                        │
+    │◄─────────────────────────────┤                                        │
+```
+
+Setiap tahap (2-6) sudah ditest terisolasi lewat unit test (lihat bagian di atas).
+Pengujian manual ini memverifikasi bahwa tahap-tahap itu benar saat dirangkai dengan
+infrastruktur sungguhan, plus perilaku yang cuma muncul di integrasi nyata: konten
+`.env` yang valid, koneksi jaringan ke Mac Studio, `ffmpeg` yang benar-benar terpasang,
+model whisper yang benar-benar ter-download, dan format pesan Kafka yang sungguhan
+cocok dengan `AnalysisRequest`/`AnalysisResult`.
+
+### Prasyarat & konfigurasi tambahan
+
+Sebelum menjalankan pengujian manual ini, pastikan semua ini tersedia:
+
+- **Python 3.11+** dengan virtualenv sudah dibuat dan `requirements.txt` +
+  `requirements-dev.txt` ter-install (`pip install -r requirements-dev.txt`).
+- **`ffmpeg` dan `ffprobe` terpasang dan ada di PATH** (`ffmpeg -version` harus
+  berhasil dari shell yang sama tempat service dijalankan). Ini dipakai
+  `video/frames.py` (ekstraksi frame) dan `faster-whisper` (ekstraksi audio) — bukan
+  dependency Python, jadi tidak ter-install lewat `pip`.
+- **Kafka broker yang bisa diakses** dari mesin ini, dengan topic request dan
+  response sudah dibuat (atau broker mengizinkan auto-create topic). Nama topic
+  default: `analytics.requests` (request) dan `analytics.results` (response) — bisa
+  diubah lewat env, lihat `.env.example`.
+- **LM Studio berjalan di Mac Studio** dengan model LLM sudah di-load, dan endpoint-nya
+  bisa diakses dari mesin ini (`LLM_BASE_URL`, format OpenAI-compatible, contoh:
+  `http://<ip-mac-studio>:1234/v1`).
+- **Endpoint VLM** yang bisa diakses dari mesin ini (`VLM_BASE_URL`, `VLM_MODEL`).
+  **Catatan penting**: per spec §9, mekanisme hosting VLM di Mac Studio ini masih
+  belum diputuskan devops (LM Studio sendiri belum dukung vision model) — kalau
+  `VLM_BASE_URL` belum diisi valid, langkah video akan gagal berulang (retry habis)
+  lalu graceful-degrade ke analisis teks-saja (`status: "partial"`); ini perilaku yang
+  benar, bukan bug, selama devops belum memastikan endpoint-nya.
+- **Model `faster-whisper`** akan otomatis ter-download ke cache lokal saat pertama
+  kali `load_models()` dipanggil (butuh koneksi internet sekali di awal, ukuran
+  tergantung `WHISPER_MODEL_SIZE`, default `base`). Untuk pengujian pertama kali,
+  jalankan service dan tunggu sampai model selesai di-download sebelum mengirim
+  pesan test — cek log startup.
+- **File `.env`** disalin dari `.env.example` dan diisi nilai asli (bukan placeholder):
+  `KAFKA_BOOTSTRAP_SERVERS`, `LLM_BASE_URL`, `LLM_MODEL`, `VLM_BASE_URL`, `VLM_MODEL`,
+  dan lainnya sesuai kebutuhan. `Settings` (`src/config.py`) membaca dari environment
+  proses, bukan membaca file `.env` sendiri — pastikan variabelnya benar-benar
+  ter-export ke environment sebelum menjalankan `src/main.py` (mis. `set -a; source
+  .env; set +a` di shell POSIX, atau muat lewat konfigurasi process supervisor).
+- **URL video contoh** yang valid dan bisa diakses `yt-dlp` (TikTok/Instagram/
+  Facebook/Twitter-X), durasi di bawah ~10 menit sesuai asumsi spec §2/§9.
+
+### Langkah pengujian manual
+
+1. **Jalankan service**:
+   ```bash
+   .venv/Scripts/python src/main.py    # Windows
+   .venv/bin/python src/main.py        # macOS/Linux
+   ```
+   Tunggu sampai log menunjukkan model whisper selesai dimuat dan consumer siap
+   polling (tidak ada log error saat startup).
+
+2. **Kirim satu pesan test** ke topic request. Payload harus cocok dengan
+   `AnalysisRequest` (`src/schemas.py`):
+   ```json
+   {
+     "id": "manual-test-001",
+     "platform": "twitter",
+     "text": "Contoh teks postingan untuk pengujian manual",
+     "video_url": "https://contoh.com/path/ke/video.mp4",
+     "metadata": {}
+   }
+   ```
+   `text` dan `video_url` boleh salah satu `null`/dihilangkan untuk menguji jalur
+   teks-saja atau video-saja secara terpisah — lihat kombinasi yang relevan di
+   `tests/pipeline/test_analyze.py` sebagai referensi skenario yang perlu dicoba
+   (teks+video, video-saja, teks-saja, video gagal, dst).
+
+   Cara paling sederhana mengirim pesan tanpa tooling tambahan: skrip Python kecil
+   pakai `confluent-kafka` yang sudah ada di `venv` project ini:
+   ```python
+   import json
+   from confluent_kafka import Producer
+
+   p = Producer({"bootstrap.servers": "<isi sesuai KAFKA_BOOTSTRAP_SERVERS>"})
+   payload = {
+       "id": "manual-test-001",
+       "platform": "twitter",
+       "text": "Contoh teks postingan untuk pengujian manual",
+       "video_url": "https://contoh.com/path/ke/video.mp4",
+       "metadata": {},
+   }
+   p.produce("analytics.requests", key=payload["id"].encode(), value=json.dumps(payload).encode())
+   p.flush(10)
+   ```
+   Kalau broker sudah punya `kafka-console-producer.sh` terpasang, itu juga bisa
+   dipakai langsung (paste payload JSON sebagai satu baris).
+
+3. **Amati log service** — setiap tahap alur di atas seharusnya meninggalkan jejak log
+   (skip pesan malformed, error Kafka-level, kegagalan video yang di-degrade, status
+   akhir tiap item). Untuk video: proses download → ekstraksi frame → panggilan VLM →
+   transkripsi whisper akan makan waktu beberapa detik hingga puluhan detik tergantung
+   ukuran video dan kecepatan jaringan ke Mac Studio.
+
+4. **Konsumsi topic response** untuk melihat hasilnya:
+   ```python
+   from confluent_kafka import Consumer
+
+   c = Consumer({
+       "bootstrap.servers": "<isi sesuai KAFKA_BOOTSTRAP_SERVERS>",
+       "group.id": "manual-test-consumer",
+       "auto.offset.reset": "earliest",
+   })
+   c.subscribe(["analytics.results"])
+   msg = c.poll(30)
+   print(msg.value().decode())
+   ```
+   Verifikasi bentuk `AnalysisResult` (`src/schemas.py`): `id` cocok dengan yang
+   dikirim, `status` sesuai ekspektasi (`ok`/`partial`/`failed`), `video_summary`
+   terisi kalau video diproses, dan `sentiment`/`emotion`/`motivation` terisi kalau
+   `status` bukan `failed`.
+
+5. **Verifikasi offset commit**: kirim pesan lagi dengan `id` yang sama, restart
+   service, dan pastikan pesan yang **sudah** berhasil diproses+publish sebelumnya
+   **tidak** diproses ulang (offset ter-commit) — sementara pesan yang servicenya
+   mati di tengah proses (matikan paksa sebelum publish selesai) **akan** diproses
+   ulang saat service dinyalakan lagi (bukti garansi *at-least-once*: offset baru
+   commit setelah publish sukses, lihat `src/main.py`'s `run_once()`).
+
+### Kapan wajib menjalankan ini
+
+- Sebelum deploy pertama kali ke lingkungan yang menjalankan Kafka/LM Studio/VLM
+  sungguhan.
+- Setelah devops memastikan endpoint VLM final (ganti `VLM_BASE_URL`/`VLM_MODEL`,
+  lalu ulangi langkah di atas untuk memastikan jalur video benar-benar `status: "ok"`,
+  bukan cuma `"partial"` karena VLM belum terkonfigurasi).
+- Setelah perubahan apa pun ke `src/main.py`, `src/messaging/`, atau kontrak pesan di
+  `src/schemas.py` — perubahan di area ini paling berisiko lolos dari unit test
+  (yang semuanya mocked) tapi patah di integrasi nyata.
