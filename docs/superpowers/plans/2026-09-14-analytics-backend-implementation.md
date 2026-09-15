@@ -1560,11 +1560,15 @@ class KafkaResultProducer:
             value=result.model_dump_json().encode("utf-8"),
             callback=_on_delivery,
         )
-        self._producer.flush(10)
+        pending = self._producer.flush(10)
 
+        if pending > 0:
+            raise PublishError(f"{pending} message(s) not delivered before flush timeout")
         if errors:
             raise PublishError(str(errors[0]))
 ```
+
+**Corrected post-review (security scan finding):** the original version of this snippet called `self._producer.flush(10)` and discarded its return value. `Producer.flush(timeout)` returns the count of messages still undelivered when the timeout expires — if nonzero, those messages' delivery callbacks never fired, so `errors` would stay empty and `publish()` would return successfully even though delivery was never confirmed (a fail-open: an ambiguous/unconfirmed state was silently treated as success, which could mean `main.py` commits the Kafka offset for a result that was never actually published). The corrected snippet above checks `flush()`'s return value and raises `PublishError` if anything is still pending.
 
 - [ ] **Step 4: Run the tests to verify they pass**
 
