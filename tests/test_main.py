@@ -1,9 +1,9 @@
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 import pytest
 
 from ai.llm_client import SentimentAnalysis
-from main import run_once
+from main import run_forever, run_once
 from messaging.producer import PublishError
 from pipeline.analyze import AnalyzeDependencies
 from schemas import (
@@ -81,3 +81,43 @@ def test_run_once_does_not_commit_when_publish_raises() -> None:
 
     producer.publish.assert_called_once()
     consumer.commit.assert_not_called()
+
+
+def test_run_forever_stops_gracefully_on_keyboard_interrupt_and_closes_consumer() -> None:
+    consumer = MagicMock()
+    producer = MagicMock()
+    call_count = 0
+
+    def fake_run_once(*args: object, **kwargs: object) -> bool:
+        nonlocal call_count
+        call_count += 1
+        if call_count >= 2:
+            raise KeyboardInterrupt
+        return False
+
+    with patch("main.run_once", side_effect=fake_run_once):
+        run_forever(consumer, producer, _deps())  # must not raise
+
+    assert call_count == 2
+    consumer.close.assert_called_once()
+
+
+def test_run_forever_continues_after_a_non_interrupt_exception() -> None:
+    consumer = MagicMock()
+    producer = MagicMock()
+    call_count = 0
+
+    def fake_run_once(*args: object, **kwargs: object) -> bool:
+        nonlocal call_count
+        call_count += 1
+        if call_count == 1:
+            raise RuntimeError("transient failure")
+        if call_count >= 2:
+            raise KeyboardInterrupt
+        return False
+
+    with patch("main.run_once", side_effect=fake_run_once):
+        run_forever(consumer, producer, _deps())  # must not raise
+
+    assert call_count == 2
+    consumer.close.assert_called_once()

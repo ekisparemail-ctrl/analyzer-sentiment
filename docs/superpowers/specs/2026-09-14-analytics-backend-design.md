@@ -331,6 +331,13 @@ insufficient input or exhausted retries; `error` carries the reason.
   consumer forever.
 - No dead-letter topic in v1; failed items are visible via the
   `status`/`error` fields in the result and via service logs.
+- **Process shutdown (Ctrl-C / `SIGINT`)**: `main.py`'s consume loop is
+  wrapped so a `KeyboardInterrupt` stops it cleanly (logs a shutdown
+  message, closes the Kafka consumer) instead of dumping a raw traceback.
+  This is deliberately separate from the per-message `except Exception`
+  handling above — a `KeyboardInterrupt` is not an `Exception` subclass in
+  Python, so it is never mistaken for a processing failure and never
+  triggers a retry/continue.
 
 ## 7. Testing Strategy
 

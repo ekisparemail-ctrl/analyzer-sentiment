@@ -76,6 +76,32 @@ def run_once(
     return True
 
 
+def run_forever(
+    consumer: KafkaRequestConsumer,
+    producer: KafkaResultProducer,
+    deps: AnalyzeDependencies,
+) -> None:
+    """
+    Runs run_once() forever. A KeyboardInterrupt (Ctrl-C) stops the loop
+    cleanly instead of dumping a raw traceback -- any other exception is
+    logged and the loop continues (see run_once's own error handling).
+    """
+    try:
+        while True:
+            try:
+                run_once(consumer, producer, deps)
+            except Exception as e:
+                logger.error(
+                    "Unhandled exception while processing message; offset not committed, "
+                    "continuing to next message: %s",
+                    e,
+                )
+    except KeyboardInterrupt:
+        logger.info("Received interrupt signal, shutting down gracefully.")
+    finally:
+        consumer.close()
+
+
 def main() -> None:
     settings = Settings()  # type: ignore[call-arg]
     deps = build_dependencies(settings)
@@ -88,15 +114,15 @@ def main() -> None:
     producer = KafkaResultProducer(
         settings.kafka_bootstrap_servers, settings.kafka_result_topic
     )
-    while True:
-        try:
-            run_once(consumer, producer, deps)
-        except Exception as e:
-            logger.error(
-                "Unhandled exception while processing message; offset not committed, "
-                "continuing to next message: %s",
-                e,
-            )
+    logger.info(
+        "Starting Analytics Backend (kafka_bootstrap_servers=%s, post_topic=%s, "
+        "comment_topic=%s, result_topic=%s)",
+        settings.kafka_bootstrap_servers,
+        settings.kafka_post_topic,
+        settings.kafka_comment_topic,
+        settings.kafka_result_topic,
+    )
+    run_forever(consumer, producer, deps)
 
 
 if __name__ == "__main__":

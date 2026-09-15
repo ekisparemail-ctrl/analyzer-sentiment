@@ -156,3 +156,11 @@ def test_commit_raises_commit_error_and_does_not_swallow_kafka_exception(
 
     with pytest.raises(CommitError):
         consumer.commit(fake_msg)
+
+
+def test_close_delegates_to_underlying_consumer(monkeypatch: pytest.MonkeyPatch) -> None:
+    consumer, fake_consumer_instance = _make_consumer(monkeypatch)
+
+    consumer.close()
+
+    fake_consumer_instance.close.assert_called_once()

@@ -73,3 +73,6 @@ class KafkaRequestConsumer:
         except KafkaException as e:
             logger.error("Failed to commit Kafka offset: %s", e)
             raise CommitError(str(e)) from e
+
+    def close(self) -> None:
+        self._consumer.close()

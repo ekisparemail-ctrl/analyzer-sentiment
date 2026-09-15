@@ -367,7 +367,18 @@ Sebelum menjalankan pengujian manual ini, pastikan semua ini tersedia:
    .venv/bin/python src/main.py        # macOS/Linux
    ```
    Tunggu sampai log menunjukkan model whisper selesai dimuat dan consumer siap
-   polling (tidak ada log error saat startup).
+   polling (tidak ada log error saat startup). Baris log pertama
+   (`Starting Analytics Backend (kafka_bootstrap_servers=...)`) mencetak
+   alamat broker dan nama topic yang benar-benar dipakai — **cek baris ini
+   dulu** kalau service tampak diam/retry terus tanpa progres, untuk
+   memastikan `KAFKA_BOOTSTRAP_SERVERS` di `.env` memang menunjuk ke broker
+   asli (`172.16.16.100:21000`), bukan `localhost:9092` atau nilai lain yang
+   tidak sengaja ketinggalan dari testing lokal. Kalau memang salah alamat,
+   `poll()` akan retry tanpa henti (perilaku normal, bukan bug) dan hanya
+   terlihat lewat log mentah `rdkafka#...FAIL` yang cukup teknis.
+   Menghentikan service dengan Ctrl-C akan shutdown bersih (log "Received
+   interrupt signal, shutting down gracefully." lalu keluar), bukan
+   menampilkan traceback mentah.
 
 2. **Kirim satu pesan test** ke topic request. Payload harus cocok dengan
    `AnalysisRequest` (`src/schemas.py`):
