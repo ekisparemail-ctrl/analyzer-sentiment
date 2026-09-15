@@ -185,6 +185,76 @@ summary/transcript already produced in step 3.
 
 ## 5. Data Flow
 
+### Flow diagram
+
+Dashed boxes are still open items (see §9): the Scrapper Backend has no
+Kafka consumer yet for results, and the VLM's hosting mechanism on the
+Mac Studio isn't finalized. Everything else reflects the current,
+implemented flow.
+
+```mermaid
+flowchart TD
+    subgraph SB["Scrapper Backend (Quarkus/Java)"]
+        SBOut["Kafka producer"]
+        SBIn["Kafka consumer<br/>(not built yet — spec §9)"]
+    end
+
+    subgraph AB["Analytics Backend (this project)"]
+        Consumer["messaging/consumer.py<br/>KafkaRequestConsumer"]
+        Translate["messaging/scrapper_dto.py<br/>NormalizedPost / NormalizedComment<br/>to AnalysisRequest"]
+        Pipeline["pipeline/analyze.py<br/>analyze()"]
+        HasVideo{"video_url present?"}
+        Download["video/downloader.py<br/>download_video() - yt-dlp"]
+        Frames["video/frames.py<br/>extract_frames() - ffmpeg"]
+        VlmCall["ai/vlm_client.py<br/>describe_images()"]
+        Transcribe["video/analyzer.py<br/>faster-whisper transcribe() - local CPU"]
+        SummarizeVideo["ai/llm_client.py<br/>summarize_video()"]
+        Combine["combine text + video_summary"]
+        HasContent{"any content?"}
+        Sentiment["ai/llm_client.py<br/>analyze_sentiment()"]
+        BuildResult["build AnalysisResult<br/>status: ok / partial / failed"]
+        Producer["messaging/producer.py<br/>KafkaResultProducer"]
+        Commit["commit Kafka offset<br/>(only after successful publish)"]
+    end
+
+    subgraph MS["Mac Studio"]
+        VLM[("VLM endpoint<br/>hosting mechanism TBD - spec §9")]
+        LLM[("LM Studio<br/>OpenAI-compatible LLM")]
+    end
+
+    SBOut -->|"post-scrapper-to-analysis<br/>comment-scrapper-to-analysis"| Consumer
+    Consumer --> Translate
+    Translate --> Pipeline
+    Pipeline --> HasVideo
+    HasVideo -->|"yes"| Download
+    Download --> Frames
+    Frames --> VlmCall
+    VlmCall -->|"HTTP"| VLM
+    Download --> Transcribe
+    VlmCall --> SummarizeVideo
+    Transcribe --> SummarizeVideo
+    SummarizeVideo -->|"HTTP"| LLM
+    SummarizeVideo --> Combine
+    HasVideo -->|"no"| Combine
+    Combine --> HasContent
+    HasContent -->|"no"| BuildResult
+    HasContent -->|"yes"| Sentiment
+    Sentiment -->|"HTTP"| LLM
+    Sentiment --> BuildResult
+    BuildResult --> Producer
+    Producer -->|"analysis-to-scrapper (placeholder - spec §9)"| SBIn
+    Producer --> Commit
+
+    style SBIn stroke-dasharray: 5 5
+    style VLM stroke-dasharray: 5 5
+```
+
+This diagram omits the graceful-degrade branches (video download/analyzer
+failure, sentiment failure) for readability — see §6 Error Handling for
+those.
+
+### Steps
+
 **Revised: the Scrapper Backend's real Kafka contract was confirmed by reading
 its source directly** (see `messaging/scrapper_dto.py`), replacing the earlier
 single-topic/single-schema draft below with what it actually sends.
