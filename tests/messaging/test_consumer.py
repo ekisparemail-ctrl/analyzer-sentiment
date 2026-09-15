@@ -2,8 +2,9 @@ import json
 from unittest.mock import MagicMock
 
 import pytest
+from confluent_kafka import KafkaException
 
-from messaging.consumer import KafkaRequestConsumer
+from messaging.consumer import CommitError, KafkaRequestConsumer
 
 
 def _make_consumer(monkeypatch: pytest.MonkeyPatch) -> tuple[KafkaRequestConsumer, MagicMock]:
@@ -52,7 +53,7 @@ def test_poll_request_skips_and_commits_malformed_message(monkeypatch: pytest.Mo
     result = consumer.poll_request(1.0)
 
     assert result is None
-    fake_consumer_instance.commit.assert_called_once_with(fake_msg)
+    fake_consumer_instance.commit.assert_called_once_with(message=fake_msg, asynchronous=False)
 
 
 def test_poll_request_returns_none_on_kafka_level_error(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -79,7 +80,7 @@ def test_poll_request_commits_when_msg_value_is_none(monkeypatch: pytest.MonkeyP
     result = consumer.poll_request(1.0)
 
     assert result is None
-    fake_consumer_instance.commit.assert_called_once_with(fake_msg)
+    fake_consumer_instance.commit.assert_called_once_with(message=fake_msg, asynchronous=False)
 
 
 def test_commit_delegates_to_underlying_consumer(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -88,4 +89,15 @@ def test_commit_delegates_to_underlying_consumer(monkeypatch: pytest.MonkeyPatch
 
     consumer.commit(fake_msg)
 
-    fake_consumer_instance.commit.assert_called_once_with(fake_msg)
+    fake_consumer_instance.commit.assert_called_once_with(message=fake_msg, asynchronous=False)
+
+
+def test_commit_raises_commit_error_and_does_not_swallow_kafka_exception(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    consumer, fake_consumer_instance = _make_consumer(monkeypatch)
+    fake_msg = MagicMock()
+    fake_consumer_instance.commit.side_effect = KafkaException("commit failed")
+
+    with pytest.raises(CommitError):
+        consumer.commit(fake_msg)

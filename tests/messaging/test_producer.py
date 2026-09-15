@@ -49,6 +49,22 @@ def test_publish_raises_publish_error_on_delivery_failure(monkeypatch: pytest.Mo
         producer.publish(_result())
 
 
+def test_publish_raises_publish_error_when_produce_raises_buffer_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fake_producer_instance = MagicMock()
+    fake_producer_instance.produce.side_effect = BufferError("local queue full")
+    fake_producer_class = MagicMock(return_value=fake_producer_instance)
+    monkeypatch.setattr("messaging.producer.Producer", fake_producer_class)
+
+    producer = KafkaResultProducer("localhost:9092", "analytics.results")
+
+    with pytest.raises(PublishError, match="local queue full"):
+        producer.publish(_result())
+
+    fake_producer_instance.flush.assert_not_called()
+
+
 def test_publish_raises_publish_error_when_flush_times_out(monkeypatch: pytest.MonkeyPatch) -> None:
     fake_producer_instance = MagicMock()
 

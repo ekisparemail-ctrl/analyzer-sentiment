@@ -1,7 +1,10 @@
 from unittest.mock import MagicMock
 
+import pytest
+
 from ai.llm_client import SentimentAnalysis
 from main import run_once
+from messaging.producer import PublishError
 from pipeline.analyze import AnalyzeDependencies
 from schemas import (
     AnalysisContext,
@@ -63,3 +66,18 @@ def test_run_once_analyzes_publishes_and_commits_when_message_polled() -> None:
     published_result = producer.publish.call_args[0][0]
     assert published_result.id == "1"
     consumer.commit.assert_called_once_with(fake_msg)
+
+
+def test_run_once_does_not_commit_when_publish_raises() -> None:
+    request = AnalysisRequest(id="1", platform=Platform.TWITTER, text="teks asli")
+    fake_msg = object()
+    consumer = MagicMock()
+    consumer.poll_request.return_value = (request, fake_msg)
+    producer = MagicMock()
+    producer.publish.side_effect = PublishError("boom")
+
+    with pytest.raises(PublishError):
+        run_once(consumer, producer, _deps())
+
+    producer.publish.assert_called_once()
+    consumer.commit.assert_not_called()
