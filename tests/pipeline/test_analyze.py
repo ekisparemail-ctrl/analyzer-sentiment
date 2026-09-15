@@ -136,3 +136,25 @@ def test_analyze_sentiment_retry_exhausted_returns_failed_status() -> None:
 
     assert result.status == Status.FAILED
     assert result.error is not None and "sentiment analysis failed" in result.error
+
+
+def test_analyze_video_failure_and_sentiment_failure_preserves_both_errors() -> None:
+    def broken_download(url: str, dest_dir: str) -> str:
+        raise VideoDownloadError("private video")
+
+    def broken_analyze_sentiment(content: str) -> SentimentAnalysis:
+        raise LLMClientError("LLM unreachable")
+
+    request = AnalysisRequest(
+        id="9", platform=Platform.TWITTER, text="teks asli", video_url="https://x.com/9"
+    )
+
+    result = analyze(
+        request,
+        _deps(download_video=broken_download, analyze_sentiment=broken_analyze_sentiment),
+    )
+
+    assert result.status == Status.FAILED
+    assert result.error is not None
+    assert "video processing failed" in result.error
+    assert "sentiment analysis failed" in result.error
