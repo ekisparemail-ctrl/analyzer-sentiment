@@ -342,12 +342,20 @@ Sebelum menjalankan pengujian manual ini, pastikan semua ini tersedia:
   tergantung `WHISPER_MODEL_SIZE`, default `base`). Untuk pengujian pertama kali,
   jalankan service dan tunggu sampai model selesai di-download sebelum mengirim
   pesan test — cek log startup.
-- **File `.env`** disalin dari `.env.example` dan diisi nilai asli (bukan placeholder):
-  `KAFKA_BOOTSTRAP_SERVERS`, `LLM_BASE_URL`, `LLM_MODEL`, `VLM_BASE_URL`, `VLM_MODEL`,
-  dan lainnya sesuai kebutuhan. `Settings` (`src/config.py`) membaca dari environment
-  proses, bukan membaca file `.env` sendiri — pastikan variabelnya benar-benar
-  ter-export ke environment sebelum menjalankan `src/main.py` (mis. `set -a; source
-  .env; set +a` di shell POSIX, atau muat lewat konfigurasi process supervisor).
+- **File `.env`** disalin dari `.env.example` (di root project, sejajar dengan
+  `src/`) dan diisi nilai asli (bukan placeholder): `KAFKA_BOOTSTRAP_SERVERS`,
+  `LLM_BASE_URL`, `LLM_MODEL`, `VLM_BASE_URL`, `VLM_MODEL`, dan lainnya sesuai
+  kebutuhan. `Settings` (`src/config.py`) otomatis membaca file `.env` ini kalau
+  ada di working directory saat `src/main.py` dijalankan (`env_file=".env"` di
+  `SettingsConfigDict`) — tidak perlu export manual ke environment. Kalau
+  sebuah env var **juga** di-set langsung di environment proses, nilai
+  environment itu yang menang (bukan isi `.env`). *(Riwayat: sebelum
+  perbaikan di `docs/issue-findings.md`, `Settings` cuma baca `os.environ`
+  dan mengabaikan `.env` sama sekali — menjalankan `src/main.py` langsung
+  setelah menyalin `.env.example` akan gagal dengan `ValidationError: Field
+  required` untuk `kafka_bootstrap_servers`/`llm_base_url`/`llm_model` walau
+  filenya sudah terisi benar. Ini sudah diperbaiki; disebut di sini supaya
+  gejalanya dikenali kalau muncul lagi di versi lama.)*
 - **URL video contoh** yang valid dan bisa diakses `yt-dlp` (TikTok/Instagram/
   Facebook/Twitter-X), durasi di bawah ~10 menit sesuai asumsi spec §2/§9.
 
