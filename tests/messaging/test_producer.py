@@ -17,6 +17,7 @@ def test_publish_produces_message_and_flushes(monkeypatch: pytest.MonkeyPatch) -
         callback(None, MagicMock())
 
     fake_producer_instance.produce.side_effect = fake_produce
+    fake_producer_instance.flush.return_value = 0
     fake_producer_class = MagicMock(return_value=fake_producer_instance)
     monkeypatch.setattr("messaging.producer.Producer", fake_producer_class)
 
@@ -38,10 +39,28 @@ def test_publish_raises_publish_error_on_delivery_failure(monkeypatch: pytest.Mo
         callback(Exception("broker unavailable"), None)
 
     fake_producer_instance.produce.side_effect = fake_produce
+    fake_producer_instance.flush.return_value = 0
     fake_producer_class = MagicMock(return_value=fake_producer_instance)
     monkeypatch.setattr("messaging.producer.Producer", fake_producer_class)
 
     producer = KafkaResultProducer("localhost:9092", "analytics.results")
 
     with pytest.raises(PublishError, match="broker unavailable"):
+        producer.publish(_result())
+
+
+def test_publish_raises_publish_error_when_flush_times_out(monkeypatch: pytest.MonkeyPatch) -> None:
+    fake_producer_instance = MagicMock()
+
+    def fake_produce(topic, key, value, callback):
+        callback(None, MagicMock())
+
+    fake_producer_instance.produce.side_effect = fake_produce
+    fake_producer_instance.flush.return_value = 1
+    fake_producer_class = MagicMock(return_value=fake_producer_instance)
+    monkeypatch.setattr("messaging.producer.Producer", fake_producer_class)
+
+    producer = KafkaResultProducer("localhost:9092", "analytics.results")
+
+    with pytest.raises(PublishError, match="not delivered"):
         producer.publish(_result())

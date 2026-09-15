@@ -25,7 +25,9 @@ class KafkaResultProducer:
             value=result.model_dump_json().encode("utf-8"),
             callback=_on_delivery,
         )
-        self._producer.flush(10)
+        pending = self._producer.flush(10)
 
+        if pending > 0:
+            raise PublishError(f"{pending} message(s) not delivered before flush timeout")
         if errors:
             raise PublishError(str(errors[0]))
