@@ -1,3 +1,4 @@
+import logging
 import tempfile
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -6,6 +7,8 @@ from ai.llm_client import LLMClientError, SentimentAnalysis
 from schemas import AnalysisRequest, AnalysisResult, Status
 from video.analyzer import VideoAnalysis, VideoAnalysisError
 from video.downloader import VideoDownloadError
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -32,6 +35,7 @@ def analyze(request: AnalysisRequest, deps: AnalyzeDependencies) -> AnalysisResu
                 )
             video_summary = deps.summarize_video(analysis.summary, analysis.transcript)
         except (VideoDownloadError, VideoAnalysisError, LLMClientError) as e:
+            logger.warning("Video processing failed for request %s: %s", request.id, e)
             error_parts.append(f"video processing failed: {e}")
 
     context_parts = []
@@ -53,6 +57,7 @@ def analyze(request: AnalysisRequest, deps: AnalyzeDependencies) -> AnalysisResu
     try:
         sentiment_analysis = deps.analyze_sentiment(combined_context)
     except LLMClientError as e:
+        logger.warning("Sentiment analysis failed for request %s: %s", request.id, e)
         return AnalysisResult(
             id=request.id,
             status=Status.FAILED,

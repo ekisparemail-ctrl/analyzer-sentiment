@@ -2,7 +2,7 @@ import os
 from typing import cast
 
 from yt_dlp import YoutubeDL  # type: ignore[import-untyped]
-from yt_dlp.utils import DownloadError  # type: ignore[import-untyped]
+from yt_dlp.utils import YoutubeDLError  # type: ignore[import-untyped]
 
 
 class VideoDownloadError(Exception):
@@ -20,5 +20,5 @@ def download_video(url: str, dest_dir: str) -> str:
         with YoutubeDL(options) as ydl:
             info = ydl.extract_info(url, download=True)
             return cast(str, ydl.prepare_filename(info))
-    except DownloadError as e:
+    except YoutubeDLError as e:
         raise VideoDownloadError(str(e)) from e

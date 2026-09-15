@@ -1,9 +1,16 @@
 import json
+import logging
 
-from confluent_kafka import Consumer
+from confluent_kafka import Consumer, KafkaException
 from pydantic import ValidationError
 
 from schemas import AnalysisRequest
+
+logger = logging.getLogger(__name__)
+
+
+class CommitError(Exception):
+    pass
 
 
 class KafkaRequestConsumer:
@@ -23,18 +30,24 @@ class KafkaRequestConsumer:
         if msg is None:
             return None
         if msg.error():
+            logger.warning("Kafka poll returned a message-level error: %s", msg.error())
             return None
         try:
             msg_value = msg.value()
             if msg_value is None:
-                self._consumer.commit(msg)  # type: ignore[call-overload]
+                self.commit(msg)
                 return None
             data = json.loads(msg_value.decode("utf-8"))
             request = AnalysisRequest(**data)
-        except (json.JSONDecodeError, ValidationError, UnicodeDecodeError, TypeError):
-            self._consumer.commit(msg)  # type: ignore[call-overload]
+        except (json.JSONDecodeError, ValidationError, UnicodeDecodeError, TypeError) as e:
+            logger.warning("Skipping malformed message: %s", e)
+            self.commit(msg)
             return None
         return request, msg
 
     def commit(self, msg: object) -> None:
-        self._consumer.commit(msg)  # type: ignore[call-overload]
+        try:
+            self._consumer.commit(message=msg, asynchronous=False)  # type: ignore[call-overload]
+        except KafkaException as e:
+            logger.error("Failed to commit Kafka offset: %s", e)
+            raise CommitError(str(e)) from e

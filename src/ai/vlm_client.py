@@ -41,7 +41,7 @@ def describe_images(config: VLMConfig, prompt: str, image_data_urls: list[str]) 
             response.raise_for_status()
             data = response.json()
             return str(data["choices"][0]["message"]["content"])
-        except (httpx.HTTPError, KeyError, IndexError) as e:
+        except (httpx.HTTPError, KeyError, IndexError, ValueError) as e:
             last_error = e
             if attempt < config.retry_attempts:
                 time.sleep(config.retry_backoff_seconds * attempt)
