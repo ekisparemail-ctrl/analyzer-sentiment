@@ -81,11 +81,12 @@ def main() -> None:
     deps = build_dependencies(settings)
     consumer = KafkaRequestConsumer(
         settings.kafka_bootstrap_servers,
-        settings.kafka_request_topic,
+        settings.kafka_post_topic,
+        settings.kafka_comment_topic,
         settings.kafka_consumer_group,
     )
     producer = KafkaResultProducer(
-        settings.kafka_bootstrap_servers, settings.kafka_response_topic
+        settings.kafka_bootstrap_servers, settings.kafka_result_topic
     )
     while True:
         try:

@@ -13,7 +13,7 @@ from schemas import (
 )
 
 
-def test_analysis_request_requires_id_and_platform_but_text_and_video_are_optional() -> None:
+def test_analysis_request_requires_id_but_platform_text_and_video_are_optional() -> None:
     request = AnalysisRequest(id="abc123", platform=Platform.TWITTER)
 
     assert request.id == "abc123"
@@ -21,6 +21,14 @@ def test_analysis_request_requires_id_and_platform_but_text_and_video_are_option
     assert request.text is None
     assert request.video_url is None
     assert request.metadata == {}
+
+
+def test_analysis_request_allows_omitting_platform() -> None:
+    # Real Kafka messages from the Scrapper Backend never carry a platform field
+    # (see messaging/scrapper_dto.py) -- platform must remain optional.
+    request = AnalysisRequest(id="abc123")
+
+    assert request.platform is None
 
 
 def test_analysis_request_accepts_text_and_video_url() -> None:

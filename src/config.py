@@ -5,11 +5,15 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(extra="ignore")
 
     kafka_bootstrap_servers: str
-    # Topic name defaults below are placeholders -- the exact contract with the
-    # Scrapper Backend is not yet confirmed (spec section 9). Override via env
-    # once confirmed; no other code changes should be needed.
-    kafka_request_topic: str = "analytics.requests"
-    kafka_response_topic: str = "analytics.results"
+    # Confirmed against the Scrapper Backend's actual source (application.yml,
+    # KafkaProducerService) -- these are the real topic names it publishes to,
+    # not placeholders.
+    kafka_post_topic: str = "post-scrapper-to-analysis"
+    kafka_comment_topic: str = "comment-scrapper-to-analysis"
+    # Still a placeholder: the Scrapper Backend has no Kafka consumer yet for
+    # results coming back (spec section 9). Override via env once confirmed;
+    # no other code changes should be needed.
+    kafka_result_topic: str = "analysis-to-scrapper"
     kafka_consumer_group: str = "analytics-backend"
 
     llm_base_url: str

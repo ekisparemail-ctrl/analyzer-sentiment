@@ -108,7 +108,8 @@ src/
   config.py            # env-based settings (Kafka, LLM base url+model, VLM base url+model, whisper model size, frame/timeout/retry settings)
   schemas.py           # pydantic models: AnalysisRequest, AnalysisResult, internal DTOs
   messaging/
-    consumer.py        # Kafka consume wrapper (infra only, no business logic)
+    scrapper_dto.py     # wire-format models matching the Scrapper Backend's real Kafka messages (NormalizedPost/NormalizedComment) + translation into AnalysisRequest
+    consumer.py        # Kafka consume wrapper: subscribes to both post/comment topics, translates via scrapper_dto.py
     producer.py         # Kafka publish wrapper
   pipeline/
     analyze.py          # use-case orchestrator: optional text/video -> summary -> sentiment result
@@ -184,10 +185,25 @@ summary/transcript already produced in step 3.
 
 ## 5. Data Flow
 
-1. Consumer reads a message from the request topic, decodes it into
-   `AnalysisRequest { id, text: str | None, video_url: str | None,
-   platform: str, metadata: dict }`. Malformed messages are logged and
-   skipped (not retried).
+**Revised: the Scrapper Backend's real Kafka contract was confirmed by reading
+its source directly** (see `messaging/scrapper_dto.py`), replacing the earlier
+single-topic/single-schema draft below with what it actually sends.
+
+1. Consumer subscribes to **two** topics the Scrapper Backend actually
+   publishes to (Quarkus/SmallRye, confirmed from its `application.yml`):
+   `post-scrapper-to-analysis` (`NormalizedPostDto`) and
+   `comment-scrapper-to-analysis` (`NormalizedCommentDto`). Neither DTO
+   carries a `platform` field, so `AnalysisRequest.platform` is optional
+   and left unset for real Kafka messages. `messaging/scrapper_dto.py`
+   parses whichever DTO matches the message's topic and translates it
+   into our internal `AnalysisRequest { id, text: str | None,
+   video_url: str | None, platform: Platform | None, metadata: dict }`:
+   a post's `title` becomes `text` and `videoUrl` becomes `video_url`; a
+   comment's `text` becomes `text` and `video_url` is always `None`
+   (comments never carry video). Other DTO fields are carried through in
+   `metadata` for traceability. Malformed messages (topic mismatch,
+   parse/validation failure) are logged and skipped (committed, not
+   retried).
 2. `pipeline.analyze(request)`:
    - If `video_url` is present:
      1. Download it (`video/downloader.py`).
@@ -215,20 +231,48 @@ summary/transcript already produced in step 3.
 4. The consumer commits the offset only after a successful publish
    (at-least-once delivery).
 
-### Message schemas (draft — pending Kafka contract confirmation, see §9)
+### Message schemas
 
-Request:
+**Incoming (confirmed against the Scrapper Backend's real source — see §9 for
+what's still open):**
+
+`post-scrapper-to-analysis` topic (`NormalizedPostDto`):
 ```json
 {
   "id": "string",
-  "platform": "twitter | tiktok | instagram | facebook",
-  "text": "string | null",
-  "video_url": "string | null",
-  "metadata": {}
+  "title": "string | null",
+  "postUrl": "string | null",
+  "videoUrl": "string | null",
+  "channelUsername": "string | null",
+  "channelName": "string | null",
+  "views": 0,
+  "likes": 0,
+  "comments": 0,
+  "uploadedAt": 0
 }
 ```
 
-Result:
+`comment-scrapper-to-analysis` topic (`NormalizedCommentDto`):
+```json
+{
+  "id": "string",
+  "postId": "string | null",
+  "text": "string | null",
+  "username": "string | null",
+  "likes": 0,
+  "replies": 0,
+  "createdAt": "string | null",
+  "hasMedia": false
+}
+```
+
+Neither carries a `platform` field — `AnalysisRequest.platform` is optional
+and unpopulated when built from real Kafka messages (see §5).
+
+Outgoing result — schema unaffected by the above (this is our own
+`AnalysisResult` shape, published to a topic name that is **still a
+placeholder**, since the Scrapper Backend has no Kafka consumer for it yet —
+see §9):
 ```json
 {
   "id": "string",
@@ -342,10 +386,23 @@ in-process VLM.
   this is the bootstrap server for the sentiment analyzer's Kafka
   cluster. It must be supplied to the service via config/env (e.g.
   `KAFKA_BOOTSTRAP_SERVERS`), never hardcoded in source.
-- **Kafka topic names and exact message contract** are still not
-  coordinated with the Scrapper Backend developer (only the broker
-  address is known so far). This spec assumes the request/result shapes
-  in §5; adjust once confirmed.
+- **Incoming Kafka topic names and message contract are now confirmed** —
+  read directly from the Scrapper Backend's source
+  (`C:\Users\kacang\IdeaProjects\scrapping-be`: `application.yml`,
+  `KafkaProducerService.java`, `NormalizedPostDto`/`NormalizedCommentDto`),
+  not assumed. See §5 for the confirmed shapes.
+- **Outgoing (result) topic name is still a placeholder** —
+  `analysis-to-scrapper` (`kafka_result_topic` in `config.py`). The
+  Scrapper Backend's source has no `@Incoming` Kafka channel at all yet
+  (only `@Outgoing` producers for posts/comments), so there is currently
+  no consumer on its side for our results. Devops/the Scrapper Backend
+  developer need to confirm either a topic name once a consumer is
+  added, or that results should instead go directly to the Sentiment
+  Backend via REST (it already exposes `/api/v1/keywords/...` endpoints
+  that the Scrapper Backend calls, following the same pattern as the old
+  n8n reference workflow's `POST /api/v1/sentiments`) — this was raised
+  and the decision made for now is to keep targeting a Kafka topic and
+  adjust once the Scrapper Backend side is ready.
 - **VLM hosting mechanism on the Mac Studio is still undecided by
   devops** — LM Studio does not support vision models, and devops is
   still evaluating alternatives. This spec assumes the eventual endpoint
