@@ -1,4 +1,5 @@
 import os
+import uuid
 from typing import cast
 
 from yt_dlp import YoutubeDL  # type: ignore[import-untyped]
@@ -11,16 +12,22 @@ class VideoDownloadError(Exception):
 
 def download_video(url: str, dest_dir: str) -> str:
     """Downloads `url` into `dest_dir` using yt-dlp and returns the local file path."""
+    # A random name we fully control, instead of yt-dlp's own %(id)s: we
+    # download the Scrapper Backend's videoUrl directly (a raw CDN link, not
+    # the platform's own webpage URL), so no site-specific extractor
+    # recognizes it and yt-dlp falls back to its generic extractor, which
+    # derives %(id)s from the URL itself. For some CDNs (observed for
+    # TikTok's) that fallback id is the entire query string -- 300+
+    # characters, past Windows' MAX_PATH even after sanitizing unsafe
+    # characters (see docs/issue-findings.md). Never let the destination
+    # filename depend on extractor-provided metadata.
+    basename = uuid.uuid4().hex
     options = {
-        "outtmpl": os.path.join(dest_dir, "%(id)s.%(ext)s"),
+        "outtmpl": os.path.join(dest_dir, f"{basename}.%(ext)s"),
         "quiet": True,
         "noplaylist": True,
-        # A real TikTok video hit "unable to open for writing: [Errno 22]
-        # Invalid argument" -- a known yt-dlp/TikTok-extractor quirk where an
-        # intermediate download temp-file gets named from a raw CDN URL
-        # (query string included) instead of a sanitized filename, when
-        # yt-dlp has to merge separate video+audio formats. A single
-        # progressive format avoids that merge path entirely.
+        # A single progressive format avoids needing to merge separate
+        # video+audio formats (which would need ffmpeg muxing anyway).
         "format": "best[ext=mp4]/best",
         # Defense in depth: force ASCII-safe filenames regardless of what
         # any title/description-derived filename component contains.
