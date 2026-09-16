@@ -242,7 +242,7 @@ flowchart TD
     Sentiment -->|"HTTP"| LLM
     Sentiment --> BuildResult
     BuildResult --> Producer
-    Producer -->|"analysis-to-scrapper (placeholder - spec §9)"| SBIn
+    Producer -->|"analysis-to-scrapper (name final, pending devops provisioning - spec §9)"| SBIn
     Producer --> Commit
 
     style SBIn stroke-dasharray: 5 5
@@ -468,18 +468,27 @@ in-process VLM.
   (`C:\Users\kacang\IdeaProjects\scrapping-be`: `application.yml`,
   `KafkaProducerService.java`, `NormalizedPostDto`/`NormalizedCommentDto`),
   not assumed. See §5 for the confirmed shapes.
-- **Outgoing (result) topic name is still a placeholder** —
-  `analysis-to-scrapper` (`kafka_result_topic` in `config.py`). The
-  Scrapper Backend's source has no `@Incoming` Kafka channel at all yet
-  (only `@Outgoing` producers for posts/comments), so there is currently
-  no consumer on its side for our results. Devops/the Scrapper Backend
-  developer need to confirm either a topic name once a consumer is
-  added, or that results should instead go directly to the Sentiment
-  Backend via REST (it already exposes `/api/v1/keywords/...` endpoints
-  that the Scrapper Backend calls, following the same pattern as the old
-  n8n reference workflow's `POST /api/v1/sentiments`) — this was raised
-  and the decision made for now is to keep targeting a Kafka topic and
-  adjust once the Scrapper Backend side is ready.
+- **Outgoing (result) topic name is finalized on our side: `analysis-to-
+  scrapper`** (`kafka_result_topic` in `config.py`) — this is our topic
+  to name, the same way the Scrapper Backend named its own two topics
+  (`post-scrapper-to-analysis` / `comment-scrapper-to-analysis`); the
+  name mirrors that convention in reverse. What's still pending is
+  **provisioning it on the broker** — devops (who administers Kafka, not
+  us) needs to create this topic, the same way the Scrapper Backend's
+  two topics were provisioned. Hand-off note for devops: *"Please create
+  Kafka topic `analysis-to-scrapper` on `172.16.16.100:21000`, using the
+  same conventions (partitions/replication) as `post-scrapper-to-
+  analysis`/`comment-scrapper-to-analysis`."* The Scrapper Backend's
+  source still has no `@Incoming` Kafka channel at all yet (only
+  `@Outgoing` producers), so there is no consumer on its side for our
+  results yet — that remains the Scrapper Backend developer's own work,
+  not something this project or devops needs to build.
+  **`AnalysisResult`'s schema is deliberately left unchanged** (see §5) —
+  no `source`/type-indicator field was added to distinguish a
+  post-derived result from a comment-derived one, specifically so the
+  Scrapper Backend's future consumer isn't required to handle anything
+  beyond correlating by `id` (a decision made explicitly to avoid
+  imposing any change on that side beyond building the consumer itself).
 - **VLM hosting mechanism on the Mac Studio is still undecided by
   devops** — LM Studio does not support vision models, and devops is
   still evaluating alternatives. This spec assumes the eventual endpoint

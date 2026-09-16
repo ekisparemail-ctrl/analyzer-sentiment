@@ -10,9 +10,11 @@ class Settings(BaseSettings):
     # not placeholders.
     kafka_post_topic: str = "post-scrapper-to-analysis"
     kafka_comment_topic: str = "comment-scrapper-to-analysis"
-    # Still a placeholder: the Scrapper Backend has no Kafka consumer yet for
-    # results coming back (spec section 9). Override via env once confirmed;
-    # no other code changes should be needed.
+    # Name finalized on our side (ours to name, mirroring the Scrapper
+    # Backend's own topic-naming convention) -- still pending devops
+    # provisioning it on the broker, and the Scrapper Backend still has no
+    # consumer for it yet (spec section 9). Override via env if the name
+    # ever changes; no other code changes should be needed.
     kafka_result_topic: str = "analysis-to-scrapper"
     kafka_consumer_group: str = "analytics-backend"
 
