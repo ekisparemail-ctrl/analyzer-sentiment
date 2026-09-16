@@ -1,4 +1,5 @@
 import logging
+import time
 from functools import partial
 
 from ai.llm_client import LLMConfig, analyze_sentiment, summarize_video
@@ -68,6 +69,9 @@ def run_once(
     return True
 
 
+HEARTBEAT_INTERVAL_SECONDS = 30.0
+
+
 def run_forever(
     consumer: KafkaRequestConsumer,
     producer: KafkaResultProducer,
@@ -77,11 +81,25 @@ def run_forever(
     Runs run_once() forever. A KeyboardInterrupt (Ctrl-C) stops the loop
     cleanly instead of dumping a raw traceback -- any other exception is
     logged and the loop continues (see run_once's own error handling).
+
+    Logs a heartbeat during idle polling (no new message) so a long silence
+    can be told apart from a hang -- without this, a real run once looked
+    completely silent for the whole time it was up, with no way to tell
+    whether it was actually still polling.
     """
+    last_heartbeat = time.monotonic()
     try:
         while True:
             try:
-                run_once(consumer, producer, deps)
+                processed = run_once(consumer, producer, deps)
+                now = time.monotonic()
+                if processed:
+                    last_heartbeat = now
+                elif now - last_heartbeat >= HEARTBEAT_INTERVAL_SECONDS:
+                    logger.info(
+                        "Still polling, no new messages in the last ~%.0fs.", now - last_heartbeat
+                    )
+                    last_heartbeat = now
             except Exception as e:
                 logger.error(
                     "Unhandled exception while processing message; offset not committed, "
@@ -118,6 +136,7 @@ def main() -> None:
     settings = Settings()  # type: ignore[call-arg]
     _log_startup_banner(settings)
     deps = build_dependencies(settings)
+    logger.info("Models ready.")
     consumer = KafkaRequestConsumer(
         settings.kafka_bootstrap_servers,
         settings.kafka_scrapper_topic,
@@ -125,6 +144,10 @@ def main() -> None:
     )
     producer = KafkaResultProducer(
         settings.kafka_bootstrap_servers, settings.kafka_result_topic
+    )
+    logger.info(
+        "Kafka consumer/producer ready (consumer_group=%s); entering poll loop.",
+        settings.kafka_consumer_group,
     )
     run_forever(consumer, producer, deps)
 

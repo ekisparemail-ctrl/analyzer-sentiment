@@ -125,6 +125,66 @@ def test_run_forever_stops_gracefully_on_keyboard_interrupt_and_closes_consumer(
     consumer.close.assert_called_once()
 
 
+def test_run_forever_logs_a_heartbeat_during_idle_polling(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    # Regression test: a real run (docs/issue-findings.md) looked completely
+    # silent for its whole lifetime, with no way to tell whether it was
+    # actually still polling or stuck -- a periodic heartbeat during idle
+    # polling closes that gap.
+    consumer = MagicMock()
+    producer = MagicMock()
+    fake_now = 0.0
+
+    def fake_monotonic() -> float:
+        return fake_now
+
+    monkeypatch.setattr("main.time.monotonic", fake_monotonic)
+
+    call_count = 0
+
+    def fake_run_once(*args: object, **kwargs: object) -> bool:
+        nonlocal call_count, fake_now
+        call_count += 1
+        fake_now += 31.0  # exceeds HEARTBEAT_INTERVAL_SECONDS every call
+        if call_count >= 2:
+            raise KeyboardInterrupt
+        return False
+
+    with patch("main.run_once", side_effect=fake_run_once), caplog.at_level(logging.INFO):
+        run_forever(consumer, producer, _deps())
+
+    assert "Still polling" in caplog.text
+
+
+def test_run_forever_does_not_log_a_heartbeat_while_messages_keep_arriving(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    consumer = MagicMock()
+    producer = MagicMock()
+    fake_now = 0.0
+
+    def fake_monotonic() -> float:
+        return fake_now
+
+    monkeypatch.setattr("main.time.monotonic", fake_monotonic)
+
+    call_count = 0
+
+    def fake_run_once(*args: object, **kwargs: object) -> bool:
+        nonlocal call_count, fake_now
+        call_count += 1
+        fake_now += 31.0
+        if call_count >= 2:
+            raise KeyboardInterrupt
+        return True  # a message was processed each time -> no idle heartbeat
+
+    with patch("main.run_once", side_effect=fake_run_once), caplog.at_level(logging.INFO):
+        run_forever(consumer, producer, _deps())
+
+    assert "Still polling" not in caplog.text
+
+
 def test_run_forever_continues_after_a_non_interrupt_exception() -> None:
     consumer = MagicMock()
     producer = MagicMock()

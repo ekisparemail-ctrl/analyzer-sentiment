@@ -1,5 +1,8 @@
+import logging
 from collections.abc import Callable
 from dataclasses import dataclass
+
+logger = logging.getLogger(__name__)
 
 
 class VideoAnalysisError(Exception):
@@ -32,8 +35,13 @@ def load_models(vlm_model_id: str, whisper_model_size: str) -> AnalyzerModels:
     from ai.vlm_local import describe_images, load_local_vlm
     from video.frames import extract_frames
 
+    logger.info("Loading local faster-whisper model (size=%s)...", whisper_model_size)
     whisper_model = WhisperModel(whisper_model_size, device="cpu")
+    logger.info("faster-whisper model loaded.")
+
+    logger.info("Loading local VLM (%s)... this downloads weights on first run.", vlm_model_id)
     vlm = load_local_vlm(vlm_model_id)
+    logger.info("VLM loaded.")
 
     def generate_summary(video_path: str, prompt: str, max_frames: int, max_tokens: int) -> str:
         frames = extract_frames(video_path, max_frames)
