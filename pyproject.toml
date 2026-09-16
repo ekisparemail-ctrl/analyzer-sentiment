@@ -11,7 +11,10 @@ extend-exclude = ["docs/"]
 select = ["E", "F", "I", "UP"]
 
 [tool.mypy]
-python_version = "3.11"
+# Matches the actual venv interpreter (3.13), not target-version above --
+# needed so mypy parses newer-syntax third-party stubs (e.g. numpy, pulled
+# in transitively by torch) correctly instead of rejecting them.
+python_version = "3.13"
 mypy_path = "src"
 warn_unused_ignores = true
 warn_return_any = true

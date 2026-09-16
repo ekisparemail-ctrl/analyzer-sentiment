@@ -19,8 +19,9 @@ class Settings(BaseSettings):
 
     llm_base_url: str
     llm_model: str
-    vlm_base_url: str | None = None
-    vlm_model: str | None = None
+    # Runs in-process on this same CPU-only machine (no HTTP endpoint) --
+    # see video/analyzer.py and ai/vlm_local.py.
+    vlm_model_id: str = "llava-hf/llava-onevision-qwen2-0.5b-ov-hf"
 
     whisper_model_size: str = "base"
     max_frames: int = 32

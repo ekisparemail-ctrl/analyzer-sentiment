@@ -1,4 +1,3 @@
-import base64
 import json
 import os
 import subprocess
@@ -9,11 +8,11 @@ class FrameExtractionError(Exception):
     pass
 
 
-def extract_frames(video_path: str, max_frames: int) -> list[str]:
+def extract_frames(video_path: str, max_frames: int) -> list[bytes]:
     """
     Extracts up to `max_frames` JPEG frames, evenly spaced across the video's
-    duration, using ffmpeg/ffprobe, and returns them as base64-encoded
-    data: URLs suitable for an OpenAI-compatible vision chat completion request.
+    duration, using ffmpeg/ffprobe, and returns their raw JPEG bytes (fed
+    directly to the in-process VLM, see ai/vlm_local.py).
     """
     duration = _probe_duration_seconds(video_path)
     fps = max_frames / duration if duration > 0 else 1.0
@@ -43,12 +42,11 @@ def extract_frames(video_path: str, max_frames: int) -> list[str]:
         if not frame_files:
             raise FrameExtractionError("ffmpeg produced no frames")
 
-        data_urls = []
+        frames = []
         for filename in frame_files:
             with open(os.path.join(frames_dir, filename), "rb") as f:
-                encoded = base64.b64encode(f.read()).decode("ascii")
-            data_urls.append(f"data:image/jpeg;base64,{encoded}")
-        return data_urls
+                frames.append(f.read())
+        return frames
 
 
 def _probe_duration_seconds(video_path: str) -> float:

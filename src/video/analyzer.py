@@ -1,8 +1,6 @@
 from collections.abc import Callable
 from dataclasses import dataclass
 
-from ai.vlm_client import VLMConfig
-
 
 class VideoAnalysisError(Exception):
     pass
@@ -23,26 +21,23 @@ class AnalyzerModels:
     transcribe: Callable[[str], tuple[str, list[dict]]]
 
 
-def load_models(vlm_config: VLMConfig, whisper_model_size: str) -> AnalyzerModels:
+def load_models(vlm_model_id: str, whisper_model_size: str) -> AnalyzerModels:
     """
-    Loads the local faster-whisper model once (CPU — this host has no GPU) and
-    builds a generate_summary callable that extracts frames locally and sends
-    them to a remote VLM. The whisper load is real and requires no special
-    hardware, but is still not exercised in unit tests (real model weights,
-    slow to load; see plan Global Constraints).
+    Loads the local faster-whisper and VLM models once, both CPU-only (this
+    host has no GPU) -- neither load is exercised in unit tests (real model
+    weights, slow to download/load; see plan Global Constraints).
     """
     from faster_whisper import WhisperModel  # type: ignore[import-untyped]
 
-    from ai.vlm_client import describe_images
+    from ai.vlm_local import describe_images, load_local_vlm
     from video.frames import extract_frames
 
     whisper_model = WhisperModel(whisper_model_size, device="cpu")
+    vlm = load_local_vlm(vlm_model_id)
 
     def generate_summary(video_path: str, prompt: str, max_frames: int, max_tokens: int) -> str:
-        # max_tokens is part of AnalyzerModels.generate_summary's shared shape;
-        # describe_images has no token-cap parameter, so it's unused here.
         frames = extract_frames(video_path, max_frames)
-        return describe_images(vlm_config, prompt, frames)
+        return describe_images(vlm, prompt, frames, max_tokens)
 
     def transcribe(video_path: str) -> tuple[str, list[dict]]:
         segments_iter, _info = whisper_model.transcribe(video_path, word_timestamps=False)

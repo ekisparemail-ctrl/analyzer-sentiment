@@ -45,3 +45,9 @@ class KafkaResultProducer:
         if errors:
             logger.error("Failed to publish result %s: %s", result.id, errors[0])
             raise PublishError(str(errors[0]))
+
+        # TEMPORARY (dev-only, remove once Kafka integration is verified in
+        # staging): confirms a result was actually delivered to the broker.
+        logger.info(
+            "Published result id=%s status=%s to topic=%s", result.id, result.status, self._topic
+        )

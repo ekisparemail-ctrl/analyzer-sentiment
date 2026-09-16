@@ -41,10 +41,10 @@ attempt, not part of the target architecture.
   minutes per video, confirmed by the user).
 - A video analyzer that adapts `docs/references/server.py`'s *approach*
   (sample frames, get a whole-clip VLM description, optionally
-  transcribe audio) using components that run on this service's actual
-  host — a local Windows machine, not the Mac Studio (see §3, §4):
-  local `ffmpeg` frame extraction, a network call to a VLM hosted on the
-  Mac Studio, and local CPU speech transcription via `faster-whisper`.
+  transcribe audio) using components that all run **in-process, CPU-only,
+  on this service's own Windows machine** (see §3, §4): local `ffmpeg`
+  frame extraction, a local (not HTTP-served) lightweight VLM via
+  `transformers`, and local CPU speech transcription via `faster-whisper`.
 - Turning that video analyzer's output (VLM summary + raw transcript)
   into a final `video_summary` via our own LLM.
 - Sentiment/emotion/motivation analysis via an LLM (and VLM where
@@ -53,16 +53,17 @@ attempt, not part of the target architecture.
 - Graceful handling of items missing text or missing video.
 
 **Out of scope (v1):**
-- Building or training a video understanding/summarization model, or
-  hosting/choosing the VLM itself — that lives on the Mac Studio, owned
-  by devops. We only adapt `server.py`'s frame-sampling-then-describe
-  approach into components that run where this service actually runs.
+- Building or training a video understanding/summarization model from
+  scratch — we use an existing lightweight, openly-published VLM
+  (`llava-hf/llava-onevision-qwen2-0.5b-ov-hf`, see §4/§9), not a custom
+  one. We only adapt `server.py`'s frame-sampling-then-describe approach
+  into components that run where this service actually runs.
 - Kafka topic names/message contract finalization with the Scrapper
   Backend developer (not yet coordinated — see §9 Open Assumptions).
 - Dead-letter topics / advanced retry orchestration beyond bounded
   in-process retries.
-- End-to-end integration tests against a real Kafka cluster or the real
-  remote VLM endpoint.
+- End-to-end integration tests against a real Kafka cluster or real
+  model weights (VLM/whisper).
 
 ## 3. Architecture
 
@@ -74,38 +75,51 @@ offset is committed only after a successful publish.
 
 This was chosen over two alternatives:
 - **Async worker pool in-process** — rejected for v1: added concurrency
-  complexity, but the real bottleneck is shared model inference (the
-  remote VLM, and the LLM endpoint), not the orchestration code, so
+  complexity, but the real bottleneck is shared model inference (VLM,
+  whisper, and the remote LLM endpoint), not the orchestration code, so
   in-process concurrency wouldn't reliably raise throughput.
 - **Separate gateway + task-queue workers (e.g. Celery/RQ + Redis)** —
   rejected for v1: introduces a second broker alongside Kafka with no
   demonstrated need yet.
 
 If throughput becomes a bottleneck later, scale via standard Kafka
-mechanisms: more partitions + more consumer replicas. Each replica loads
-its own local `faster-whisper` model at startup (modest CPU/RAM cost,
-unlike the earlier in-process-VLM design this spec previously
-considered) and makes outbound HTTP calls for the VLM and LLM — the
-service itself is otherwise stateless, so replica scaling is
-straightforward.
+mechanisms: more partitions + more consumer replicas. Each replica now
+loads **both** the local `faster-whisper` model **and** the local VLM at
+startup (real CPU/RAM cost — see the revision history note below) and
+makes outbound HTTP calls only for the LLM — the service itself is
+otherwise stateless, so replica scaling is straightforward, but replica
+count should be sized against available RAM/CPU, not assumed free like
+before the VLM moved back in-process.
 
 **Revision history note:** this service's video-analysis approach has
-changed twice during design. It was originally going to host/choose its
-own open-source video summarization model; then it was going to run the
-supervisor's `mlx-vlm`/`mlx-whisper` code in-process, assuming this
-service would run on the same Mac Studio as the models. It was
-clarified that this service actually runs on a **local Windows
-machine**, separate from the Mac Studio — and `mlx-vlm`/`mlx-whisper`
-depend on MLX, which is Apple-Silicon-only with no Windows build
-(Docker cannot change this — a container still runs on the host's real
-CPU architecture). §4 below reflects the current, final approach.
+changed three times during design:
+1. Originally going to host/choose its own open-source video
+   summarization model.
+2. Then going to run the supervisor's `mlx-vlm`/`mlx-whisper` code
+   in-process, assuming this service would run on the same Mac Studio as
+   the models. It was clarified that this service actually runs on a
+   **local Windows machine**, separate from the Mac Studio — and
+   `mlx-vlm`/`mlx-whisper` depend on MLX, which is Apple-Silicon-only
+   with no Windows build (Docker cannot change this — a container still
+   runs on the host's real CPU architecture). This led to calling the VLM
+   remotely over HTTP instead (whatever devops ended up hosting on the
+   Mac Studio), while `faster-whisper` (a portable, CPU-friendly
+   reimplementation with no MLX/Apple dependency) ran locally.
+3. The supervisor then asked that the VLM **not** be served over HTTP at
+   all — mirroring how `faster-whisper` already runs locally, the VLM
+   should be called directly, in-process, on this same CPU-only Windows
+   machine. Since `mlx-vlm` still can't run there, this is a **different
+   library** (`transformers`, with a small multi-image-capable model,
+   `llava-hf/llava-onevision-qwen2-0.5b-ov-hf`), not a reversion to
+   `mlx-vlm`. See §4/§9 for the resulting design and the new dependencies
+   this adds (`torch`, `transformers`, `pillow`).
 
 ## 4. Components
 
 ```
 src/
-  main.py              # entrypoint: load the local whisper model once, then start Kafka consumer loop
-  config.py            # env-based settings (Kafka, LLM base url+model, VLM base url+model, whisper model size, frame/timeout/retry settings)
+  main.py              # entrypoint: load the local whisper + VLM models once, then start Kafka consumer loop
+  config.py            # env-based settings (Kafka, LLM base url+model, VLM model id, whisper model size, frame/timeout/retry settings)
   schemas.py           # pydantic models: AnalysisRequest, AnalysisResult, internal DTOs
   messaging/
     scrapper_dto.py     # wire-format model matching the Scrapper Backend's real Kafka message (NormalizedData) + translation into AnalysisRequest
@@ -115,10 +129,10 @@ src/
     analyze.py          # use-case orchestrator: optional text/video -> summary -> sentiment result
   video/
     downloader.py       # yt-dlp wrapper (TikTok/IG/FB/X)
-    frames.py            # ffmpeg wrapper: extract N evenly-spaced frames from a video file as base64-encoded images
-    analyzer.py          # adapted from docs/references/server.py's approach: frame extraction + remote VLM call (via ai/vlm_client.py) for the summary, local faster-whisper for the transcript
+    frames.py            # ffmpeg wrapper: extract N evenly-spaced frames from a video file as raw JPEG bytes
+    analyzer.py          # adapted from docs/references/server.py's approach: frame extraction + in-process VLM call (via ai/vlm_local.py) for the summary, local faster-whisper for the transcript
   ai/
-    vlm_client.py        # thin HTTP client, OpenAI-compatible endpoint, used by video/analyzer.py for whole-video summarization AND available for direct visual sentiment reasoning in step 5 if needed
+    vlm_local.py         # loads a lightweight VLM once (transformers, CPU) and runs multi-image inference in-process — no HTTP, no remote endpoint
     llm_client.py         # thin HTTP client, OpenAI-compatible endpoint (LM Studio), video summarization + sentiment/emotion/motivation
 ```
 
@@ -140,24 +154,27 @@ there:
 
 - `video/frames.py` extracts a fixed number of evenly-spaced frames from
   the downloaded video via `ffmpeg` (a system binary, cross-platform —
-  must be present on PATH; see §9), returning them as base64-encoded
-  image data URLs. This replaces `mlx-vlm`'s internal frame sampling.
-- `video/analyzer.py`'s summary step sends those frames plus a prompt to
-  `ai/vlm_client.py`'s `describe_images()` (already built for exactly
-  this OpenAI-compatible vision-chat shape) — a network call to whatever
-  VLM devops ends up hosting on the Mac Studio (see §9). This replaces
-  `mlx_vlm.generate()`.
+  must be present on PATH; see §9), returning them as raw JPEG bytes
+  (fed directly to `ai/vlm_local.py`, no HTTP transport, so no base64
+  encoding is needed). This replaces `mlx-vlm`'s internal frame sampling.
+- `video/analyzer.py`'s summary step decodes those frames to images and
+  sends them plus a prompt to `ai/vlm_local.py`'s `describe_images()` —
+  one in-process, CPU-only multi-image chat completion via `transformers`
+  (`llava-hf/llava-onevision-qwen2-0.5b-ov-hf` by default, see §9),
+  loaded once at `main.py` startup. This replaces `mlx_vlm.generate()`
+  with a different, Windows/CPU-portable library rather than a return to
+  `mlx-vlm`.
 - `video/analyzer.py`'s transcript step runs `faster-whisper` **locally,
   on this Windows machine's CPU** (no GPU available here — see §9). This
-  replaces `mlx_whisper.transcribe()`. The whisper model is loaded once
-  at `main.py` startup, mirroring `server.py`'s `lifespan` pattern.
+  replaces `mlx_whisper.transcribe()`. Both the whisper model and the VLM
+  are loaded once at `main.py` startup, mirroring `server.py`'s
+  `lifespan` pattern.
 - The public shape of this module — `VideoAnalysisError`,
-  `VideoAnalysis`, `AnalyzerModels`, `analyze_video()` — is unchanged
-  from the original in-process design: `analyze_video()` still takes a
-  video file path and returns a summary + optional transcript, so
-  `pipeline/analyze.py` (§5) does not need to know or care that the
-  summary now comes from a network call and the transcript from a local
-  CPU model rather than both being in-process MLX calls.
+  `VideoAnalysis`, `AnalyzerModels`, `analyze_video()` — is unchanged:
+  `analyze_video()` still takes a video file path and returns a summary +
+  optional transcript, so `pipeline/analyze.py` (§5) does not need to
+  know or care that both the summary and the transcript now come from
+  local CPU models rather than one being a network call.
 - We call it with `include_transcript=True` always (see §5) — the raw
   transcript is needed downstream for exact wording, not just the VLM's
   descriptive summary.
@@ -166,31 +183,31 @@ there:
 
 The LLM used for video summarization (step 3) and sentiment/emotion/
 motivation analysis (step 5) is accessed as an **OpenAI-compatible HTTP
-API** — already decided: **LM Studio**, running on the Mac Studio.
+API** — already decided: **LM Studio**, running on the Mac Studio. This
+is unaffected by the VLM change below — the LLM remains remote.
 
-The VLM (used by `video/analyzer.py` for the whole-video summary, and
-optionally by step 5 for direct visual sentiment reasoning) is also
-assumed OpenAI-compatible over HTTP, but its hosting mechanism on the
-Mac Studio is **not yet decided by devops** — LM Studio itself does not
-support vision models, so devops is still evaluating alternatives (see
-§9). `ai/vlm_client.py` is written against the OpenAI-compatible
-vision-chat shape as the working assumption; only its configured base
-URL needs to change once devops confirms the real endpoint.
-
-`ai/vlm_client.py` is not redundant under the current design: it is the
-only way `video/analyzer.py` reaches the VLM at all (there is no
-in-process VLM anymore), and it remains available for step 5 to use
-directly if sentiment analysis ever needs visual reasoning beyond the
-summary/transcript already produced in step 3.
+The VLM (used by `video/analyzer.py` for the whole-video summary) runs
+**in-process on this same CPU-only Windows machine** — no HTTP, no Mac
+Studio dependency, no devops-hosted endpoint to coordinate. This was a
+deliberate reversal of the earlier remote-HTTP-VLM design (see §3
+revision history): the supervisor asked that the VLM be called directly
+rather than served over HTTP, the same way `faster-whisper` already
+runs. `ai/vlm_local.py` loads the model/processor once via `transformers`
+and exposes a `describe_images()` call with the same one-call,
+all-frames-at-once shape the previous HTTP client had, so
+`video/analyzer.py`'s `generate_summary` closure barely changed. Default
+model: `llava-hf/llava-onevision-qwen2-0.5b-ov-hf` (0.5B params — chosen
+for CPU-only feasibility; see §9 for the sizing rationale and the
+new `torch`/`transformers`/`pillow` dependencies this adds).
 
 ## 5. Data Flow
 
 ### Flow diagram
 
 Dashed boxes are still open items (see §9): the Scrapper Backend has no
-Kafka consumer yet for results, and the VLM's hosting mechanism on the
-Mac Studio isn't finalized. Everything else reflects the current,
-implemented flow.
+Kafka consumer yet for results. Everything else reflects the current,
+implemented flow — including the VLM, which now runs in-process (no
+network hop, no Mac Studio box for it).
 
 ```mermaid
 flowchart TD
@@ -206,7 +223,7 @@ flowchart TD
         HasVideo{"video_url present?"}
         Download["video/downloader.py<br/>download_video() - yt-dlp"]
         Frames["video/frames.py<br/>extract_frames() - ffmpeg"]
-        VlmCall["ai/vlm_client.py<br/>describe_images()"]
+        VlmCall["ai/vlm_local.py<br/>describe_images() - in-process, CPU"]
         Transcribe["video/analyzer.py<br/>faster-whisper transcribe() - local CPU"]
         SummarizeVideo["ai/llm_client.py<br/>summarize_video()"]
         Combine["combine text + video_summary"]
@@ -218,7 +235,6 @@ flowchart TD
     end
 
     subgraph MS["Mac Studio"]
-        VLM[("VLM endpoint<br/>hosting mechanism TBD - spec §9")]
         LLM[("LM Studio<br/>OpenAI-compatible LLM")]
     end
 
@@ -229,7 +245,6 @@ flowchart TD
     HasVideo -->|"yes"| Download
     Download --> Frames
     Frames --> VlmCall
-    VlmCall -->|"HTTP"| VLM
     Download --> Transcribe
     VlmCall --> SummarizeVideo
     Transcribe --> SummarizeVideo
@@ -246,7 +261,6 @@ flowchart TD
     Producer --> Commit
 
     style SBIn stroke-dasharray: 5 5
-    style VLM stroke-dasharray: 5 5
 ```
 
 This diagram omits the graceful-degrade branches (video download/analyzer
@@ -289,8 +303,8 @@ commit that changed this).
      1. Download it (`video/downloader.py`).
      2. Run it through `video/analyzer.py`:
         a. `video/frames.py` extracts evenly-spaced frames via `ffmpeg`.
-        b. The frames + a prompt go to `ai/vlm_client.py` (network call
-           to the Mac-Studio-hosted VLM) to produce `summary`.
+        b. The frames + a prompt go to `ai/vlm_local.py` (in-process,
+           CPU-only inference — no network call) to produce `summary`.
         c. If `include_transcript=True` (always, per §4): the local
            `faster-whisper` model transcribes the audio to produce
            `transcript` and `transcript_segments`.
@@ -388,21 +402,23 @@ insufficient input or exhausted retries; `error` carries the reason.
   `status: "partial"`. Does not fail the whole item.
 - **Video analyzer failure** (`video/analyzer.py` / `video/frames.py` —
   `ffmpeg` errors, e.g. corrupt file or unsupported codec; local
-  `faster-whisper` errors; or the remote VLM call failing after its own
-  retries are exhausted — see below): same graceful degrade as a
-  download failure — fall back to text-only with `status: "partial"` if
-  text is available, or `status: "failed"` if it isn't.
-- **Transient errors calling the LLM/VLM HTTP endpoints** (timeout, 5xx)
-  — this now includes the VLM call inside `video/analyzer.py`'s summary
-  step, since it is a real network call to the Mac Studio, not an
-  in-process call: bounded retry with backoff (default 3 attempts,
-  configurable) via `ai/vlm_client.py`/`ai/llm_client.py`'s own
-  retry logic. If retries are exhausted, the failure surfaces as a video
-  analyzer failure (previous bullet) or, for the sentiment-analysis LLM
-  call, a `status: "failed"` result with the error reason (so the
-  Scrapper Backend is not left waiting indefinitely) — offset is
-  committed either way, avoiding a poison-pill message blocking the
-  consumer forever.
+  `faster-whisper` errors; or the in-process VLM call raising, e.g. an
+  out-of-memory error — see below): same graceful degrade as a download
+  failure — fall back to text-only with `status: "partial"` if text is
+  available, or `status: "failed"` if it isn't.
+- **VLM inference failures** (`ai/vlm_local.py`, in-process, no network
+  involved): no HTTP retry/backoff applies here (there is no transient
+  network error to retry — a crash means the model/inputs themselves are
+  the problem), so any exception is wrapped once as `VLMLocalError` and
+  surfaces immediately as a video analyzer failure (previous bullet).
+- **Transient errors calling the LLM HTTP endpoint** (timeout, 5xx):
+  bounded retry with backoff (default 3 attempts, configurable) via
+  `ai/llm_client.py`'s own retry logic. If retries are exhausted, the
+  failure surfaces as a video analyzer failure (video summarization call)
+  or, for the sentiment-analysis LLM call, a `status: "failed"` result
+  with the error reason (so the Scrapper Backend is not left waiting
+  indefinitely) — offset is committed either way, avoiding a poison-pill
+  message blocking the consumer forever.
 - No dead-letter topic in v1; failed items are visible via the
   `status`/`error` fields in the result and via service logs.
 - **Process shutdown (Ctrl-C / `SIGINT`)**: `main.py`'s consume loop is
@@ -422,20 +438,28 @@ insufficient input or exhausted retries; `error` carries the reason.
   path).
 - Unit tests for `schemas.py`: malformed input rejected, optional fields
   behave as optional.
-- Unit tests for `ai/vlm_client.py` and `ai/llm_client.py`: request
-  construction, response parsing, retry/backoff behavior — HTTP calls
-  mocked, no real endpoint hit in tests.
+- Unit tests for `ai/llm_client.py`: request construction, response
+  parsing, retry/backoff behavior — HTTP calls mocked, no real endpoint
+  hit in tests.
+- Unit tests for `ai/vlm_local.py`: `describe_images()` is exercised
+  against a fake model/processor pair (`MagicMock`, real `torch` tensors
+  for the shape-sensitive slicing logic) — verifies the chat-template/
+  image-placeholder construction, that `max_tokens` reaches `generate()`,
+  and that failures are wrapped as `VLMLocalError`. `load_local_vlm()`
+  itself (the real `from_pretrained()` calls) is not exercised in tests
+  (real model weights, slow to download/load — same reasoning as
+  `faster-whisper` below).
 - Unit tests for `video/downloader.py`: invalid/private/unsupported URL
   handling — yt-dlp calls mocked, no real downloads in tests.
 - Unit tests for `video/frames.py`: `ffmpeg` invocation mocked, no real
   frame extraction in tests.
-- Unit tests for `video/analyzer.py`: `video/frames.py`, `ai/vlm_client.py`,
+- Unit tests for `video/analyzer.py`: `video/frames.py`, `ai/vlm_local.py`,
   and the local whisper model are all injected as fakes/mocks — verify
   our wrapper passes the right arguments, combines their outputs
   correctly, and handles their failure modes (halt on VLM failure,
   degrade on transcription-only failure). Loading the real local whisper
-  model at startup is not exercised in these tests (real model weights,
-  slow); everything downstream of that load is.
+  model and VLM at startup is not exercised in these tests (real model
+  weights, slow); everything downstream of that load is.
 - All functions carry type hints; data models use pydantic. `pytest` +
   a linter/type-checker (e.g. `ruff` + `mypy`) must pass before any task
   is considered done, per Acme's testing standard.
@@ -444,22 +468,26 @@ insufficient input or exhausted retries; `error` carries the reason.
 
 ## 8. Deployment
 
-**Revised again in this update:** Docker is viable once more. The
-earlier "no Docker" decision was specifically because `mlx-vlm`/
-`mlx-whisper` need direct Apple Silicon GPU access — that constraint no
-longer applies, because this service (a) runs on a Windows machine, not
-the Mac Studio, and (b) has no in-process MLX dependency anymore: the
-VLM is called remotely over HTTP, and `faster-whisper` (CPU) runs fine
-inside an ordinary Linux container.
+**Revised again in this update:** Docker is still viable, but the
+resource footprint per replica just grew back. The earlier "no Docker"
+decision was specifically because `mlx-vlm`/`mlx-whisper` need direct
+Apple Silicon GPU access — that constraint doesn't apply here, because
+this service (a) runs on a Windows machine, not the Mac Studio, and (b)
+has no MLX dependency: both `faster-whisper` and the VLM
+(`transformers`, CPU) run fine inside an ordinary Linux container. But
+with the VLM back in-process (§3 revision history), each replica now
+loads **two** local models (whisper + VLM) instead of one, and the
+image/dependency footprint grows substantially (`torch` alone is a
+large wheel) — size replica count and container resource limits (RAM/
+CPU) against this, not against the previous whisper-only footprint.
 
 The service is packaged as a Docker image. Its container image must
 include `ffmpeg` (a system package, e.g. `apt-get install ffmpeg` on a
 Debian-based Python base image) alongside the Python dependencies, since
 `video/frames.py` and `faster-whisper` both need it. Horizontal scaling
 (§3) means running more container replicas in the same Kafka consumer
-group; each replica pays the local whisper model's load cost at
-startup, which is modest compared to the previously-considered
-in-process VLM.
+group; each replica now pays both the local whisper model's and the
+local VLM's load cost at startup.
 
 ## 9. Open Assumptions (to confirm before/while implementing)
 
@@ -504,13 +532,33 @@ in-process VLM.
   Scrapper Backend's future consumer isn't required to handle anything
   beyond correlating by `id` (a decision made explicitly to avoid
   imposing any change on that side beyond building the consumer itself).
-- **VLM hosting mechanism on the Mac Studio is still undecided by
-  devops** — LM Studio does not support vision models, and devops is
-  still evaluating alternatives. This spec assumes the eventual endpoint
-  is OpenAI-compatible over HTTP (matching `ai/vlm_client.py`'s existing
-  design) — only its configured base URL/model name should need to
-  change once devops confirms; if the real mechanism turns out not to be
-  OpenAI-compatible, `ai/vlm_client.py` will need rework.
+- **VLM hosting is decided: in-process, not remote.** The earlier open
+  question here ("VLM hosting mechanism on the Mac Studio, undecided by
+  devops") is resolved by removing the Mac Studio dependency entirely —
+  the supervisor asked that the VLM be called directly rather than
+  served over HTTP (see §3 revision history), so there is no endpoint
+  for devops to host. Default model: `llava-hf/llava-onevision-qwen2-0.5b-ov-hf`
+  (0.5B params, native multi-image/video support matching the existing
+  one-call-per-frame-batch design), chosen for CPU-only feasibility per
+  the user's explicit ask to "try a lightweight model first" — this is a
+  config default (`VLM_MODEL_ID`), swappable without code changes if a
+  different model proves more accurate/faster once real latency is
+  measured (no vendor-published CPU-latency numbers exist for this exact
+  model; a local timing spike is recommended before tuning `MAX_FRAMES`/
+  timeout budgets further).
+- **New dependencies added for the in-process VLM:** `torch`,
+  `transformers`, `pillow` (`ai/vlm_local.py`). Per Acme's security
+  standard (dependency additions are a decision, not a default): `torch`
+  is pinned `>=2.6` because versions up to 2.5.1 are vulnerable to
+  CVE-2025-32434 (`torch.load` remote code execution, exploitable even
+  with `weights_only=True`, which `transformers.from_pretrained()` relies
+  on internally for non-safetensors checkpoints); `pillow` is pinned
+  `>=10.3` to stay clear of older image-parsing CVEs; `transformers` is
+  pinned `>=4.45` (the version that added `LlavaOnevisionForConditionalGeneration`
+  support). `docs/references/server.py`'s original supervisor-provided
+  design already depended on downloading/running third-party model
+  weights (`mlx-vlm`), so this isn't a new category of risk, just a new
+  library.
 - **Video duration**: confirmed max ~10 minutes per video (not
   long-form/hour-scale) — keeps the video pipeline lightweight (one
   download + one frame-extraction-and-analysis pass per item, no
@@ -526,3 +574,8 @@ in-process VLM.
 - Supported video platforms assumed: TikTok, Instagram, Facebook,
   Twitter/X, matching the platforms referenced in
   `docs/references/Analyst_Batches.json`.
+- **A real `scrapper-to-analysis` message was captured in production**
+  (`docs/to-do.md`) and parses correctly end-to-end against the current
+  `NormalizedData`/`request_from_normalized_data` schema with no changes
+  needed — locked in as a regression test
+  (`test_parses_real_payload_captured_from_scrapper_be`).

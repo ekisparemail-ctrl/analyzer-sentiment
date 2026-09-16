@@ -27,14 +27,14 @@ def _fake_run_factory(frame_count: int):
     return _fake_run
 
 
-def test_extract_frames_returns_base64_data_urls(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_extract_frames_returns_raw_jpeg_bytes(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr("video.frames.subprocess.run", _fake_run_factory(3))
 
     result = extract_frames("/tmp/video.mp4", max_frames=5)
 
     assert len(result) == 3
-    for url in result:
-        assert url.startswith("data:image/jpeg;base64,")
+    for frame in result:
+        assert frame == b"\xff\xd8\xff\xe0fakejpeg"
 
 
 def test_extract_frames_caps_at_max_frames(monkeypatch: pytest.MonkeyPatch) -> None:

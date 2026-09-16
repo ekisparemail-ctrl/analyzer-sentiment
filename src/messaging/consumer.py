@@ -44,6 +44,16 @@ class KafkaRequestConsumer:
             logger.warning("Skipping malformed message: %s", e)
             self.commit(msg)
             return None
+        # TEMPORARY (dev-only, remove once Kafka integration is verified in
+        # staging): confirms messages are actually being consumed/parsed, with
+        # a snippet of the payload to check the real shape.
+        logger.info(
+            "Consumed request id=%s platform=%s type=%s text_snippet=%r",
+            request.id,
+            request.platform,
+            request.metadata.get("type"),
+            (request.text or "")[:80],
+        )
         return request, msg
 
     def commit(self, msg: object) -> None:

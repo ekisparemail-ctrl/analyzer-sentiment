@@ -1,3 +1,5 @@
+import json
+
 from messaging.scrapper_dto import NormalizedData, request_from_normalized_data
 from schemas import Platform
 
@@ -89,6 +91,46 @@ def test_request_from_normalized_data_returns_none_platform_when_absent() -> Non
     request = request_from_normalized_data(data)
 
     assert request.platform is None
+
+
+def test_parses_real_payload_captured_from_scrapper_be() -> None:
+    # Exact message body pasted from a real scrapper-to-analysis Kafka
+    # message (docs/to-do.md) -- locks in the real-world shape, including
+    # which fields the Scrapper Backend actually sends as null.
+    message_text = (
+        "Harmoni Kecerdasan Pikiran dan Hati Pemimpin, "
+        "Akan Melahirkan Piranti Kebijakan Original"
+    )
+    raw = json.dumps(
+        {
+            "id": "431559555550806016",
+            "platform": "twitter",
+            "type": "POST",
+            "message": message_text,
+            "url": "https://x.com/DediMulyadi71/status/431559555550806016",
+            "videoUrl": None,
+            "imageUrl": None,
+            "authorUsername": "DediMulyadi71",
+            "authorName": "Kang Dedi Mulyadi",
+            "views": None,
+            "likes": 2,
+            "repliesCount": 1,
+            "uploadedAt": 1391726790,
+            "commentTo": None,
+        }
+    )
+
+    data = NormalizedData(**json.loads(raw))
+    request = request_from_normalized_data(data)
+
+    assert request.id == "431559555550806016"
+    assert request.platform == Platform.TWITTER
+    assert request.text == message_text
+    assert request.video_url is None
+    assert request.metadata["author_username"] == "DediMulyadi71"
+    assert request.metadata["views"] is None
+    assert request.metadata["likes"] == 2
+    assert request.metadata["uploaded_at"] == 1391726790
 
 
 def test_request_from_normalized_data_carries_extra_fields_into_metadata() -> None:

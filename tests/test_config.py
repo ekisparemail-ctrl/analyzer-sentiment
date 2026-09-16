@@ -22,7 +22,7 @@ def test_settings_loads_required_and_applies_defaults(monkeypatch: pytest.Monkey
     assert settings.kafka_scrapper_topic == "scrapper-to-analysis"
     assert settings.kafka_result_topic == "analysis-to-scrapper"
     assert settings.kafka_consumer_group == "analytics-backend"
-    assert settings.vlm_base_url is None
+    assert settings.vlm_model_id == "llava-hf/llava-onevision-qwen2-0.5b-ov-hf"
     assert settings.whisper_model_size == "base"
     assert settings.max_frames == 32
     assert settings.max_tokens == 500
