@@ -24,6 +24,7 @@ def test_settings_loads_required_and_applies_defaults(monkeypatch: pytest.Monkey
     assert settings.kafka_consumer_group == "analytics-backend"
     assert settings.vlm_model_id == "llava-hf/llava-onevision-qwen2-0.5b-ov-hf"
     assert settings.whisper_model_size == "base"
+    assert settings.whisper_vad_filter is True
     assert settings.max_frames == 32
     assert settings.max_tokens == 500
     assert settings.http_timeout_seconds == 30.0

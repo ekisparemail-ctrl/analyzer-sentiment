@@ -30,8 +30,14 @@ class SentimentAnalysis:
 
 
 SENTIMENT_SYSTEM_PROMPT = """You are an expert AI agent specialized in contextual sentiment \
-analysis for Indonesian social media content. Given the content below, respond with ONLY a \
-JSON object of this exact shape, no other text:
+analysis for social media content in any language. Detect the language of the content below \
+and write every free-text value ("topic", "key_themes", "primary", "secondary", "type", and \
+every "indicators" entry) in that same language. The one exception is "sentiment.label", \
+which must always be exactly one of the literal English words "positive", "negative", or \
+"neutral" regardless of the content's language, since it is parsed as a fixed value \
+downstream -- never translate it.
+
+Given the content below, respond with ONLY a JSON object of this exact shape, no other text:
 {
   "context": {"topic": "string", "key_themes": ["string"]},
   "sentiment": {"label": "positive|negative|neutral", "score": number, \

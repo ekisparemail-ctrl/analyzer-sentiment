@@ -21,7 +21,9 @@ def build_dependencies(settings: Settings) -> AnalyzeDependencies:
     CPU-only, on this same machine -- neither is exercised in unit tests
     (real model weights, slow to download/load; see plan Global Constraints).
     """
-    analyzer_models = load_models(settings.vlm_model_id, settings.whisper_model_size)
+    analyzer_models = load_models(
+        settings.vlm_model_id, settings.whisper_model_size, settings.whisper_vad_filter
+    )
     llm_config = LLMConfig(
         base_url=settings.llm_base_url,
         model=settings.llm_model,
@@ -121,10 +123,11 @@ def _log_startup_banner(settings: Settings) -> None:
         settings.kafka_result_topic,
     )
     logger.info(
-        "Models in use -- vlm_model_id=%s whisper_model_size=%s llm_model=%s "
-        "llm_base_url=%s max_frames=%s max_tokens=%s",
+        "Models in use -- vlm_model_id=%s whisper_model_size=%s whisper_vad_filter=%s "
+        "llm_model=%s llm_base_url=%s max_frames=%s max_tokens=%s",
         settings.vlm_model_id,
         settings.whisper_model_size,
+        settings.whisper_vad_filter,
         settings.llm_model,
         settings.llm_base_url,
         settings.max_frames,

@@ -24,6 +24,11 @@ class Settings(BaseSettings):
     vlm_model_id: str = "llava-hf/llava-onevision-qwen2-0.5b-ov-hf"
 
     whisper_model_size: str = "base"
+    # Filters out non-speech audio (e.g. music-only segments) before
+    # transcription -- faster-whisper is prone to hallucinating text over
+    # such segments otherwise. Configurable in case it turns out too
+    # aggressive for a given batch of content (e.g. drops quiet speech).
+    whisper_vad_filter: bool = True
     max_frames: int = 32
     max_tokens: int = 500
 

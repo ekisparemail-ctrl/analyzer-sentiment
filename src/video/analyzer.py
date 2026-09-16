@@ -24,7 +24,9 @@ class AnalyzerModels:
     transcribe: Callable[[str], tuple[str, list[dict]]]
 
 
-def load_models(vlm_model_id: str, whisper_model_size: str) -> AnalyzerModels:
+def load_models(
+    vlm_model_id: str, whisper_model_size: str, whisper_vad_filter: bool = True
+) -> AnalyzerModels:
     """
     Loads the local faster-whisper and VLM models once, both CPU-only (this
     host has no GPU) -- neither load is exercised in unit tests (real model
@@ -48,7 +50,9 @@ def load_models(vlm_model_id: str, whisper_model_size: str) -> AnalyzerModels:
         return describe_images(vlm, prompt, frames, max_tokens)
 
     def transcribe(video_path: str) -> tuple[str, list[dict]]:
-        segments_iter, _info = whisper_model.transcribe(video_path, word_timestamps=False)
+        segments_iter, _info = whisper_model.transcribe(
+            video_path, word_timestamps=False, vad_filter=whisper_vad_filter
+        )
         texts = []
         segments = []
         for s in segments_iter:
