@@ -1,9 +1,11 @@
+import logging
 from unittest.mock import MagicMock, patch
 
 import pytest
 
 from ai.llm_client import SentimentAnalysis
-from main import run_forever, run_once
+from config import Settings
+from main import _log_startup_banner, run_forever, run_once
 from messaging.producer import PublishError
 from pipeline.analyze import AnalyzeDependencies
 from schemas import (
@@ -38,6 +40,27 @@ def _deps() -> AnalyzeDependencies:
             ),
         ),
     )
+
+
+def test_log_startup_banner_reports_the_models_in_use(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    settings = Settings(
+        _env_file=None,  # type: ignore[call-arg]
+        kafka_bootstrap_servers="172.16.16.100:21000",
+        llm_base_url="http://localhost:1234/v1",
+        llm_model="test-llm-model",
+        vlm_model_id="llava-hf/llava-onevision-qwen2-0.5b-ov-hf",
+        whisper_model_size="base",
+    )
+
+    with caplog.at_level(logging.INFO):
+        _log_startup_banner(settings)
+
+    assert "llava-hf/llava-onevision-qwen2-0.5b-ov-hf" in caplog.text
+    assert "base" in caplog.text
+    assert "test-llm-model" in caplog.text
+    assert "scrapper-to-analysis" in caplog.text
 
 
 def test_run_once_returns_false_and_does_nothing_when_no_message_polled() -> None:

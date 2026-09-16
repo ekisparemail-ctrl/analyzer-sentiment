@@ -94,8 +94,29 @@ def run_forever(
         consumer.close()
 
 
+def _log_startup_banner(settings: Settings) -> None:
+    logger.info(
+        "Analytics Backend starting -- kafka_bootstrap_servers=%s scrapper_topic=%s "
+        "result_topic=%s",
+        settings.kafka_bootstrap_servers,
+        settings.kafka_scrapper_topic,
+        settings.kafka_result_topic,
+    )
+    logger.info(
+        "Models in use -- vlm_model_id=%s whisper_model_size=%s llm_model=%s "
+        "llm_base_url=%s max_frames=%s max_tokens=%s",
+        settings.vlm_model_id,
+        settings.whisper_model_size,
+        settings.llm_model,
+        settings.llm_base_url,
+        settings.max_frames,
+        settings.max_tokens,
+    )
+
+
 def main() -> None:
     settings = Settings()  # type: ignore[call-arg]
+    _log_startup_banner(settings)
     deps = build_dependencies(settings)
     consumer = KafkaRequestConsumer(
         settings.kafka_bootstrap_servers,
@@ -104,13 +125,6 @@ def main() -> None:
     )
     producer = KafkaResultProducer(
         settings.kafka_bootstrap_servers, settings.kafka_result_topic
-    )
-    logger.info(
-        "Starting Analytics Backend (kafka_bootstrap_servers=%s, scrapper_topic=%s, "
-        "result_topic=%s)",
-        settings.kafka_bootstrap_servers,
-        settings.kafka_scrapper_topic,
-        settings.kafka_result_topic,
     )
     run_forever(consumer, producer, deps)
 
