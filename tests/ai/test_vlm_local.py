@@ -5,12 +5,12 @@ import pytest
 import torch
 from PIL import Image
 
-from ai.vlm_local import LocalVLM, VLMLocalError, describe_images
+from ai.vlm_local import MAX_IMAGE_DIMENSION, LocalVLM, VLMLocalError, describe_images
 
 
-def _fake_jpeg_bytes() -> bytes:
+def _fake_jpeg_bytes(size: tuple[int, int] = (2, 2)) -> bytes:
     buf = io.BytesIO()
-    Image.new("RGB", (2, 2), color="red").save(buf, format="JPEG")
+    Image.new("RGB", size, color="red").save(buf, format="JPEG")
     return buf.getvalue()
 
 
@@ -67,6 +67,23 @@ def test_describe_images_strips_the_prompt_tokens_before_decoding() -> None:
 
     decoded_ids = processor.batch_decode.call_args[0][0]
     assert decoded_ids.shape[1] == 8  # 11 total - 3 prompt tokens
+
+
+def test_describe_images_downscales_large_frames_before_inference() -> None:
+    # Regression test: a real ~720x1280 video frame, sent at full
+    # resolution, made LLaVA-OneVision's anyres tiling produce 36304 tokens
+    # for just 8 frames against a 32768-token context limit ("Running this
+    # sequence through the model will result in indexing errors"). Frames
+    # must be downscaled before reaching the processor, regardless of the
+    # source video's actual resolution.
+    vlm, _model, processor = _fake_vlm()
+    frames = [_fake_jpeg_bytes(size=(1280, 720))]
+
+    describe_images(vlm, "Describe these images.", frames, max_tokens=100)
+
+    passed_images = processor.call_args.kwargs["images"]
+    assert len(passed_images) == 1
+    assert max(passed_images[0].size) <= MAX_IMAGE_DIMENSION
 
 
 def test_describe_images_wraps_failures_in_vlm_local_error() -> None:

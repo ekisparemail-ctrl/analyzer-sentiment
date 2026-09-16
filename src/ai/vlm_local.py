@@ -9,6 +9,16 @@ class VLMLocalError(Exception):
     pass
 
 
+# LLaVA-OneVision's "anyres" image processing tiles an image based on its
+# resolution -- a full-resolution video frame (e.g. 720x1280+) can produce
+# thousands of tokens per image, easily exceeding the model's context window
+# with just a handful of frames (observed: 8 full-res frames -> 36304 tokens
+# against a 32768 limit, "Running this sequence through the model will
+# result in indexing errors"). Downscaling first keeps tiling, and therefore
+# token count, bounded regardless of the source video's resolution.
+MAX_IMAGE_DIMENSION = 448
+
+
 @dataclass
 class LocalVLM:
     model: Any
@@ -36,7 +46,11 @@ def describe_images(vlm: LocalVLM, prompt: str, frames: list[bytes], max_tokens:
     previous HTTP-based describe_images() it replaces.
     """
     try:
-        images = [Image.open(io.BytesIO(frame)).convert("RGB") for frame in frames]
+        images = []
+        for frame in frames:
+            image = Image.open(io.BytesIO(frame)).convert("RGB")
+            image.thumbnail((MAX_IMAGE_DIMENSION, MAX_IMAGE_DIMENSION), Image.Resampling.LANCZOS)
+            images.append(image)
         conversation = [
             {
                 "role": "user",
