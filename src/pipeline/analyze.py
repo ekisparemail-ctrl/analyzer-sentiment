@@ -28,12 +28,16 @@ def analyze(request: AnalysisRequest, deps: AnalyzeDependencies) -> AnalysisResu
 
     if request.video_url:
         try:
+            logger.info("Downloading video for request %s...", request.id)
             with tempfile.TemporaryDirectory() as tmp_dir:
                 video_path = deps.download_video(request.video_url, tmp_dir)
+                logger.info("Video downloaded for request %s.", request.id)
                 analysis = deps.analyze_video(
                     video_path, deps.video_prompt, deps.max_frames, deps.max_tokens, True
                 )
+            logger.info("Summarizing video for request %s...", request.id)
             video_summary = deps.summarize_video(analysis.summary, analysis.transcript)
+            logger.info("Video summarized for request %s.", request.id)
         except (VideoDownloadError, VideoAnalysisError, LLMClientError) as e:
             logger.warning("Video processing failed for request %s: %s", request.id, e)
             error_parts.append(f"video processing failed: {e}")
@@ -55,7 +59,9 @@ def analyze(request: AnalysisRequest, deps: AnalyzeDependencies) -> AnalysisResu
 
     combined_context = "\n\n".join(context_parts)
     try:
+        logger.info("Running sentiment analysis for request %s...", request.id)
         sentiment_analysis = deps.analyze_sentiment(combined_context)
+        logger.info("Sentiment analysis complete for request %s.", request.id)
     except LLMClientError as e:
         logger.warning("Sentiment analysis failed for request %s: %s", request.id, e)
         return AnalysisResult(

@@ -46,10 +46,17 @@ def load_models(
     logger.info("VLM loaded.")
 
     def generate_summary(video_path: str, prompt: str, max_frames: int, max_tokens: int) -> str:
+        logger.info("Extracting up to %s frames from %s...", max_frames, video_path)
         frames = extract_frames(video_path, max_frames)
-        return describe_images(vlm, prompt, frames, max_tokens)
+        logger.info(
+            "Extracted %s frames, running VLM inference (CPU, can take a while)...", len(frames)
+        )
+        summary = describe_images(vlm, prompt, frames, max_tokens)
+        logger.info("VLM inference complete.")
+        return summary
 
     def transcribe(video_path: str) -> tuple[str, list[dict]]:
+        logger.info("Transcribing audio from %s...", video_path)
         segments_iter, _info = whisper_model.transcribe(
             video_path, word_timestamps=False, vad_filter=whisper_vad_filter
         )
@@ -59,6 +66,7 @@ def load_models(
             text = s.text.strip()
             texts.append(text)
             segments.append({"start": s.start, "end": s.end, "text": text})
+        logger.info("Transcription complete (%s segments).", len(segments))
         return " ".join(texts).strip(), segments
 
     return AnalyzerModels(generate_summary=generate_summary, transcribe=transcribe)
