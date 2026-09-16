@@ -2,7 +2,9 @@ import io
 from dataclasses import dataclass
 from typing import Any
 
+import torch
 from PIL import Image
+from transformers import AutoProcessor, LlavaOnevisionForConditionalGeneration
 
 
 class VLMLocalError(Exception):
@@ -28,14 +30,26 @@ class LocalVLM:
 def load_local_vlm(model_id: str) -> LocalVLM:
     """
     Loads the VLM and its processor once, in-process, for CPU-only inference
-    (this host has no GPU) -- not exercised in unit tests (real model
-    weights, slow to download/load; see plan Global Constraints).
+    (this host has no GPU). The local-cache-first/online-fallback control
+    flow is unit tested (mocked AutoProcessor/model classes); the real
+    from_pretrained() calls themselves are not (real model weights, slow to
+    download/load; see plan Global Constraints).
     """
-    import torch
-    from transformers import AutoProcessor, LlavaOnevisionForConditionalGeneration
-
-    processor = AutoProcessor.from_pretrained(model_id)
-    model = LlavaOnevisionForConditionalGeneration.from_pretrained(model_id, dtype=torch.float32)
+    # from_pretrained() normally does an online freshness check against the
+    # Hub even when everything is already cached -- a real run hit a 10s
+    # read timeout there, adding ~30s of delay for no benefit once the model
+    # is already fully cached (the common case after the first run). Prefer
+    # the cache; only go online if it's genuinely not cached yet.
+    try:
+        processor = AutoProcessor.from_pretrained(model_id, local_files_only=True)
+        model = LlavaOnevisionForConditionalGeneration.from_pretrained(
+            model_id, dtype=torch.float32, local_files_only=True
+        )
+    except OSError:
+        processor = AutoProcessor.from_pretrained(model_id)
+        model = LlavaOnevisionForConditionalGeneration.from_pretrained(
+            model_id, dtype=torch.float32
+        )
     return LocalVLM(model=model, processor=processor)
 
 

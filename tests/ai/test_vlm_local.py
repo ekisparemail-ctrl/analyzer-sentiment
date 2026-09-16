@@ -5,7 +5,13 @@ import pytest
 import torch
 from PIL import Image
 
-from ai.vlm_local import MAX_IMAGE_DIMENSION, LocalVLM, VLMLocalError, describe_images
+from ai.vlm_local import (
+    MAX_IMAGE_DIMENSION,
+    LocalVLM,
+    VLMLocalError,
+    describe_images,
+    load_local_vlm,
+)
 
 
 def _fake_jpeg_bytes(size: tuple[int, int] = (2, 2)) -> bytes:
@@ -24,6 +30,53 @@ def _fake_vlm(generated_text: str = "a busy street scene") -> tuple[LocalVLM, Ma
     model.generate.return_value = torch.zeros((1, 8), dtype=torch.long)
 
     return LocalVLM(model=model, processor=processor), model, processor
+
+
+def test_load_local_vlm_prefers_the_local_cache(monkeypatch: pytest.MonkeyPatch) -> None:
+    fake_processor = MagicMock()
+    fake_model = MagicMock()
+    fake_processor_cls = MagicMock()
+    fake_processor_cls.from_pretrained.return_value = fake_processor
+    fake_model_cls = MagicMock()
+    fake_model_cls.from_pretrained.return_value = fake_model
+    monkeypatch.setattr("ai.vlm_local.AutoProcessor", fake_processor_cls)
+    monkeypatch.setattr("ai.vlm_local.LlavaOnevisionForConditionalGeneration", fake_model_cls)
+
+    vlm = load_local_vlm("some/model")
+
+    assert vlm.processor is fake_processor
+    assert vlm.model is fake_model
+    fake_processor_cls.from_pretrained.assert_called_once_with(
+        "some/model", local_files_only=True
+    )
+    assert fake_model_cls.from_pretrained.call_args.kwargs["local_files_only"] is True
+
+
+def test_load_local_vlm_falls_back_to_online_when_not_cached(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Regression test: a real run hit a 10s read timeout doing an online
+    # freshness check even though the model was already fully cached,
+    # adding ~30s of delay for no benefit. Preferring the cache must not
+    # break the genuinely-not-cached-yet (first run) case.
+    fake_processor = MagicMock()
+    fake_model = MagicMock()
+    fake_processor_cls = MagicMock()
+    fake_processor_cls.from_pretrained.side_effect = [OSError("not cached"), fake_processor]
+    fake_model_cls = MagicMock()
+    fake_model_cls.from_pretrained.return_value = fake_model
+    monkeypatch.setattr("ai.vlm_local.AutoProcessor", fake_processor_cls)
+    monkeypatch.setattr("ai.vlm_local.LlavaOnevisionForConditionalGeneration", fake_model_cls)
+
+    vlm = load_local_vlm("some/model")
+
+    assert vlm.processor is fake_processor
+    assert vlm.model is fake_model
+    assert fake_processor_cls.from_pretrained.call_count == 2
+    fallback_kwargs = fake_processor_cls.from_pretrained.call_args_list[-1].kwargs
+    assert "local_files_only" not in fallback_kwargs
+    fake_model_cls.from_pretrained.assert_called_once()
+    assert "local_files_only" not in fake_model_cls.from_pretrained.call_args.kwargs
 
 
 def test_describe_images_returns_generated_text() -> None:
