@@ -45,14 +45,17 @@ class KafkaRequestConsumer:
             self.commit(msg)
             return None
         # TEMPORARY (dev-only, remove once Kafka integration is verified in
-        # staging): confirms messages are actually being consumed/parsed, with
-        # a snippet of the payload to check the real shape.
+        # staging): confirms messages are actually being consumed/parsed.
+        # Deliberately does not log request.text/metadata content -- those
+        # are user-generated post/comment data (Acme security standard:
+        # never log PII / user data bodies), so only shape/size is logged.
         logger.info(
-            "Consumed request id=%s platform=%s type=%s text_snippet=%r",
+            "Consumed request id=%s platform=%s type=%s has_video=%s text_len=%s",
             request.id,
             request.platform,
             request.metadata.get("type"),
-            (request.text or "")[:80],
+            request.video_url is not None,
+            len(request.text) if request.text else 0,
         )
         return request, msg
 
