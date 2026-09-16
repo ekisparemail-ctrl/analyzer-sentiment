@@ -25,9 +25,7 @@ def load_local_vlm(model_id: str) -> LocalVLM:
     from transformers import AutoProcessor, LlavaOnevisionForConditionalGeneration
 
     processor = AutoProcessor.from_pretrained(model_id)
-    model = LlavaOnevisionForConditionalGeneration.from_pretrained(
-        model_id, torch_dtype=torch.float32
-    )
+    model = LlavaOnevisionForConditionalGeneration.from_pretrained(model_id, dtype=torch.float32)
     return LocalVLM(model=model, processor=processor)
 
 

@@ -8,5 +8,9 @@ faster-whisper>=1.0,<2
 # under weights_only=True on earlier versions -- transformers' from_pretrained
 # uses torch.load internally for non-safetensors checkpoints).
 torch>=2.6,<3
+# AutoProcessor for llava-onevision pulls in AutoVideoProcessor, which
+# requires torchvision even though we only ever pass images, not video.
+# >=0.28 avoids CVE-2025-27516/CVE-2025-50182 in earlier torchvision releases.
+torchvision>=0.28,<1
 transformers>=4.45,<5
 pillow>=10.3,<11
