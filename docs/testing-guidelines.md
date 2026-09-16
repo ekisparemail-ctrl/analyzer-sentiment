@@ -394,6 +394,15 @@ Sebelum menjalankan pengujian manual ini, pastikan semua ini tersedia:
 
 ### Langkah pengujian manual
 
+**Alternatif tanpa Kafka sama sekali:** kalau Scrapper Backend sedang tidak bisa
+memproduksi traffic nyata (mis. kehabisan credit tool AI-nya), jalankan
+`.venv/Scripts/python scripts/replay_sample_payload.py` -- ini memutar payload
+hardcode yang sama seperti di langkah 2 di bawah lewat seluruh pipeline
+(download, VLM, whisper, LLM) langsung dari Python, tanpa Kafka, dan tidak
+mem-publish ke topic hasil asli (aman untuk dicoba berulang-ulang). Berguna
+untuk memverifikasi pipeline itu sendiri; langkah-langkah di bawah tetap
+diperlukan untuk memverifikasi integrasi Kafka yang sesungguhnya.
+
 1. **Jalankan service**:
    ```bash
    .venv/Scripts/python src/main.py    # Windows
@@ -427,31 +436,43 @@ Sebelum menjalankan pengujian manual ini, pastikan semua ini tersedia:
 2. **Kirim satu pesan test** ke topic request. Payload harus cocok dengan bentuk asli
    pesan Scrapper Backend, `NormalizedData` (`src/messaging/scrapper_dto.py`,
    camelCase) — **bukan** `AnalysisRequest` langsung, itu bentuk internal setelah
-   diterjemahkan `request_from_normalized_data()`:
+   diterjemahkan `request_from_normalized_data()`. Contoh di bawah adalah payload
+   **nyata** yang pernah tertangkap di produksi (topic `scrapper-to-analysis`,
+   partition 0, offset 73, 2026-09-16) — dipakai juga sebagai satu-satunya
+   contoh acuan di seluruh project ini (lihat juga
+   `tests/messaging/test_scrapper_dto.py`'s
+   `test_parses_real_payload_captured_from_scrapper_be` dan
+   `scripts/replay_sample_payload.py`, yang memutar payload persis ini lewat
+   seluruh pipeline tanpa Kafka sama sekali):
    ```json
    {
-     "id": "manual-test-001",
-     "platform": "twitter",
+     "id": "7685758857540275463",
+     "platform": "tiktok",
      "type": "POST",
-     "message": "Contoh teks postingan untuk pengujian manual",
-     "videoUrl": "https://contoh.com/path/ke/video.mp4",
+     "message": "KPK Tangkap 17 Orang Termasuk Dirjen ATR/BPN #ott #korupsi #kpk",
+     "url": "https://www.tiktok.com/@kompas.tv.ambon/video/7685758857540275463",
+     "videoUrl": "https://v16m.tiktokcdn-us.com/d0c29d97db51a6db354a2fe27a857c87/6aaaab1a/video/tos/alisg/tos-alisg-pve-0037c001/oEyT7AfBUqEQTTR2Epg4IeFEsqKFwqpVDUBUBU/?a=1233&bti=NEBzNTY6QGo6OjZALnAjNDQuYCMxNDNg&&bt=198&ft=arR-Iq4fmr2PD12lJU-I3wUEI7JUMeF~O5&mime_type=video_mp4&rc=ZDRmaWg7OWk5OmRpOGYzNUBpajhrcnc5cmRuZDMzODczNEAtNTViNF5hNTIxMV8yYy8xYSM2cDRoMmRjbWhhLS1kMTFzcw%3D%3D&vvpl=1&l=2026091608361478C3BF2E06E59D10F481&btag=e000d0000",
      "imageUrl": null,
-     "authorUsername": "contoh_user",
-     "authorName": "Contoh User",
-     "views": null,
-     "likes": 0,
-     "repliesCount": 0,
-     "uploadedAt": 1700000000,
+     "authorUsername": "kompas.tv.ambon",
+     "authorName": "Kompas tv Ambon",
+     "views": 39291,
+     "likes": 1036,
+     "repliesCount": 91,
+     "uploadedAt": "2026-09-15T13:49:53.000Z",
      "commentTo": null
    }
    ```
-   `message` dan `videoUrl` boleh salah satu `null`/dihilangkan untuk menguji jalur
-   teks-saja atau video-saja secara terpisah — lihat kombinasi yang relevan di
+   Catatan: `uploadedAt` di sini sengaja string ISO (bukan epoch integer) --
+   ini bentuk asli yang dikirim Scrapper Backend untuk sebagian item, sudah
+   ditangani (`messaging/scrapper_dto.py`'s `_normalize_uploaded_at`). `videoUrl`-nya
+   adalah link CDN langsung (bukan URL halaman TikTok) -- itu sebabnya
+   `video/downloader.py` men-generate nama file sendiri alih-alih memakai
+   `%(id)s` hasil ekstraksi yt-dlp (lihat riwayat commit-nya kalau perlu detail).
+
+   Hapus/ubah `message` dan `videoUrl` untuk menguji jalur teks-saja atau
+   video-saja secara terpisah — lihat kombinasi yang relevan di
    `tests/pipeline/test_analyze.py` sebagai referensi skenario yang perlu dicoba
-   (teks+video, video-saja, teks-saja, video gagal, dst), dan
-   `tests/messaging/test_scrapper_dto.py`'s
-   `test_parses_real_payload_captured_from_scrapper_be` untuk contoh payload asli
-   yang pernah tertangkap dari produksi.
+   (teks+video, video-saja, teks-saja, video gagal, dst).
 
    Cara paling sederhana mengirim pesan tanpa tooling tambahan: skrip Python kecil
    pakai `confluent-kafka` yang sudah ada di `venv` project ini:
@@ -461,11 +482,18 @@ Sebelum menjalankan pengujian manual ini, pastikan semua ini tersedia:
 
    p = Producer({"bootstrap.servers": "<isi sesuai KAFKA_BOOTSTRAP_SERVERS>"})
    payload = {
-       "id": "manual-test-001",
-       "platform": "twitter",
+       "id": "7685758857540275463",
+       "platform": "tiktok",
        "type": "POST",
-       "message": "Contoh teks postingan untuk pengujian manual",
-       "videoUrl": "https://contoh.com/path/ke/video.mp4",
+       "message": "KPK Tangkap 17 Orang Termasuk Dirjen ATR/BPN #ott #korupsi #kpk",
+       "videoUrl": (
+           "https://v16m.tiktokcdn-us.com/d0c29d97db51a6db354a2fe27a857c87/6aaaab1a/"
+           "video/tos/alisg/tos-alisg-pve-0037c001/oEyT7AfBUqEQTTR2Epg4IeFEsqKFwqpVDUBUBU/"
+           "?a=1233&bti=NEBzNTY6QGo6OjZALnAjNDQuYCMxNDNg&&bt=198"
+           "&ft=arR-Iq4fmr2PD12lJU-I3wUEI7JUMeF~O5&mime_type=video_mp4"
+           "&rc=ZDRmaWg7OWk5OmRpOGYzNUBpajhrcnc5cmRuZDMzODczNEAtNTViNF5hNTIxMV8yYy8xYSM2cDRoMmRj"
+           "bWhhLS1kMTFzcw%3D%3D&vvpl=1&l=2026091608361478C3BF2E06E59D10F481&btag=e000d0000"
+       ),
    }
    p.produce(
        "scrapper-to-analysis", key=payload["id"].encode(), value=json.dumps(payload).encode()
