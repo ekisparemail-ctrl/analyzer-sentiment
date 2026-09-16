@@ -34,6 +34,33 @@ def test_download_video_returns_path_of_downloaded_file(
     )
 
 
+def test_download_video_requests_a_single_progressive_format_with_safe_filenames(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    # Regression test: a real TikTok video (docs/issue-findings.md) failed
+    # with "unable to open for writing: [Errno 22] Invalid argument" -- a
+    # known yt-dlp/TikTok-extractor quirk where an intermediate download
+    # temp-file gets named from a raw CDN URL (query string, "&"/"?"
+    # included) instead of a sanitized filename, when yt-dlp has to merge
+    # separate video/audio formats. Forcing a single progressive format
+    # avoids that merge path; restrictfilenames is extra defense against
+    # unsafe characters in any title/description-derived filename component.
+    fake_ydl_instance = MagicMock()
+    fake_ydl_instance.__enter__.return_value = fake_ydl_instance
+    fake_ydl_instance.__exit__.return_value = False
+    fake_ydl_instance.extract_info.return_value = {"id": "abc123", "ext": "mp4"}
+    fake_ydl_instance.prepare_filename.return_value = str(tmp_path / "abc123.mp4")
+
+    fake_ydl_class = MagicMock(return_value=fake_ydl_instance)
+    monkeypatch.setattr("video.downloader.YoutubeDL", fake_ydl_class)
+
+    download_video("https://tiktok.com/@user/video/1", str(tmp_path))
+
+    options = fake_ydl_class.call_args[0][0]
+    assert options["format"] == "best[ext=mp4]/best"
+    assert options["restrictfilenames"] is True
+
+
 def test_download_video_wraps_extraction_errors(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
