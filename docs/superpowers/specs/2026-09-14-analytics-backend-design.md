@@ -543,9 +543,21 @@ local VLM's load cost at startup.
   the user's explicit ask to "try a lightweight model first" — this is a
   config default (`VLM_MODEL_ID`), swappable without code changes if a
   different model proves more accurate/faster once real latency is
-  measured (no vendor-published CPU-latency numbers exist for this exact
-  model; a local timing spike is recommended before tuning `MAX_FRAMES`/
-  timeout budgets further).
+  measured.
+  **Real latency measured (2026-09-16):** a real ~30s TikTok clip at the
+  original `MAX_FRAMES=32` default took over 20 minutes end to end on this
+  CPU-only machine — every frame is encoded by the VLM's vision tower
+  before generation can even start, so frame count is the main lever over
+  response time. `MAX_FRAMES` default lowered to `8` accordingly (trades
+  off coarser video understanding for speed; raise it back up once this is
+  re-measured or if a GPU path becomes viable — see the AMD/DirectML note
+  below). GPU acceleration was investigated and rejected for now: this
+  machine's only GPU is an integrated AMD one, and DirectML (the only
+  Windows-compatible acceleration path for AMD, since ROCm doesn't support
+  Windows) caps out at PyTorch 2.2 and Python 3.12, both older than what
+  this project requires (`torch>=2.6` for CVE-2025-32434, Python 3.13
+  venv) — revisit only if DirectML support catches up, or if the machine
+  gains an NVIDIA GPU (CUDA path).
 - **New dependencies added for the in-process VLM:** `torch`,
   `transformers`, `pillow` (`ai/vlm_local.py`). Per Acme's security
   standard (dependency additions are a decision, not a default): `torch`

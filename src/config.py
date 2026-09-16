@@ -29,7 +29,13 @@ class Settings(BaseSettings):
     # such segments otherwise. Configurable in case it turns out too
     # aggressive for a given batch of content (e.g. drops quiet speech).
     whisper_vad_filter: bool = True
-    max_frames: int = 32
+    # Every frame is encoded by the VLM's vision tower before generation can
+    # even start, so this is the main lever over VLM response time on
+    # CPU-only inference -- a real ~30s TikTok clip at the old default (32)
+    # took over 20 minutes end to end. Lower = faster but coarser video
+    # understanding (fewer sampled moments); tune per how much of that
+    # trade-off is acceptable once real latency is measured (spec section 9).
+    max_frames: int = 8
     max_tokens: int = 500
 
     http_timeout_seconds: float = 30.0
