@@ -6,10 +6,9 @@ class Settings(BaseSettings):
 
     kafka_bootstrap_servers: str
     # Confirmed against the Scrapper Backend's actual source (application.yml,
-    # KafkaProducerService) -- these are the real topic names it publishes to,
-    # not placeholders.
-    kafka_post_topic: str = "post-scrapper-to-analysis"
-    kafka_comment_topic: str = "comment-scrapper-to-analysis"
+    # KafkaProducerService) -- the real topic name it publishes to (merged
+    # from separate post/comment topics into one), not a placeholder.
+    kafka_scrapper_topic: str = "scrapper-to-analysis"
     # Name finalized on our side (ours to name, mirroring the Scrapper
     # Backend's own topic-naming convention) -- still pending devops
     # provisioning it on the broker, and the Scrapper Backend still has no

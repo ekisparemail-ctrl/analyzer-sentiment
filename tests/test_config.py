@@ -19,8 +19,7 @@ def test_settings_loads_required_and_applies_defaults(monkeypatch: pytest.Monkey
     assert settings.kafka_bootstrap_servers == "172.16.16.100:21000"
     assert settings.llm_base_url == "http://localhost:1234/v1"
     assert settings.llm_model == "test-model"
-    assert settings.kafka_post_topic == "post-scrapper-to-analysis"
-    assert settings.kafka_comment_topic == "comment-scrapper-to-analysis"
+    assert settings.kafka_scrapper_topic == "scrapper-to-analysis"
     assert settings.kafka_result_topic == "analysis-to-scrapper"
     assert settings.kafka_consumer_group == "analytics-backend"
     assert settings.vlm_base_url is None

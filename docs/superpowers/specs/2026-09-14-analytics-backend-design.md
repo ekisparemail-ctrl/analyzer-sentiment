@@ -108,8 +108,8 @@ src/
   config.py            # env-based settings (Kafka, LLM base url+model, VLM base url+model, whisper model size, frame/timeout/retry settings)
   schemas.py           # pydantic models: AnalysisRequest, AnalysisResult, internal DTOs
   messaging/
-    scrapper_dto.py     # wire-format models matching the Scrapper Backend's real Kafka messages (NormalizedPost/NormalizedComment) + translation into AnalysisRequest
-    consumer.py        # Kafka consume wrapper: subscribes to both post/comment topics, translates via scrapper_dto.py
+    scrapper_dto.py     # wire-format model matching the Scrapper Backend's real Kafka message (NormalizedData) + translation into AnalysisRequest
+    consumer.py        # Kafka consume wrapper: subscribes to the single scrapper topic, translates via scrapper_dto.py
     producer.py         # Kafka publish wrapper
   pipeline/
     analyze.py          # use-case orchestrator: optional text/video -> summary -> sentiment result
@@ -201,7 +201,7 @@ flowchart TD
 
     subgraph AB["Analytics Backend (this project)"]
         Consumer["messaging/consumer.py<br/>KafkaRequestConsumer"]
-        Translate["messaging/scrapper_dto.py<br/>NormalizedPost / NormalizedComment<br/>to AnalysisRequest"]
+        Translate["messaging/scrapper_dto.py<br/>NormalizedData to AnalysisRequest"]
         Pipeline["pipeline/analyze.py<br/>analyze()"]
         HasVideo{"video_url present?"}
         Download["video/downloader.py<br/>download_video() - yt-dlp"]
@@ -222,7 +222,7 @@ flowchart TD
         LLM[("LM Studio<br/>OpenAI-compatible LLM")]
     end
 
-    SBOut -->|"post-scrapper-to-analysis<br/>comment-scrapper-to-analysis"| Consumer
+    SBOut -->|"scrapper-to-analysis"| Consumer
     Consumer --> Translate
     Translate --> Pipeline
     Pipeline --> HasVideo
@@ -255,24 +255,34 @@ those.
 
 ### Steps
 
-**Revised: the Scrapper Backend's real Kafka contract was confirmed by reading
-its source directly** (see `messaging/scrapper_dto.py`), replacing the earlier
-single-topic/single-schema draft below with what it actually sends.
+**Revised twice now: the Scrapper Backend's real Kafka contract was confirmed
+by reading its source directly** (see `messaging/scrapper_dto.py`). It
+originally published to two separate topics with two separate DTOs
+(`post-scrapper-to-analysis`/`NormalizedPostDto` and
+`comment-scrapper-to-analysis`/`NormalizedCommentDto`); the Scrapper Backend
+then merged these into a single topic and a single unified DTO, described
+below (the two-topic version is no longer current — see §9 for the exact
+commit that changed this).
 
-1. Consumer subscribes to **two** topics the Scrapper Backend actually
+1. Consumer subscribes to the **single** topic the Scrapper Backend
    publishes to (Quarkus/SmallRye, confirmed from its `application.yml`):
-   `post-scrapper-to-analysis` (`NormalizedPostDto`) and
-   `comment-scrapper-to-analysis` (`NormalizedCommentDto`). Neither DTO
-   carries a `platform` field, so `AnalysisRequest.platform` is optional
-   and left unset for real Kafka messages. `messaging/scrapper_dto.py`
-   parses whichever DTO matches the message's topic and translates it
-   into our internal `AnalysisRequest { id, text: str | None,
-   video_url: str | None, platform: Platform | None, metadata: dict }`:
-   a post's `title` becomes `text` and `videoUrl` becomes `video_url`; a
-   comment's `text` becomes `text` and `video_url` is always `None`
-   (comments never carry video). Other DTO fields are carried through in
-   `metadata` for traceability. Malformed messages (topic mismatch,
-   parse/validation failure) are logged and skipped (committed, not
+   `scrapper-to-analysis` (`NormalizedDataDto`), which now carries an
+   explicit `platform` field (populated into `AnalysisRequest.platform`,
+   normalizing case — the Scrapper Backend's own `Platform` enum
+   inconsistently serializes Facebook as `"Facebook"` while every other
+   platform is lowercase) and a `type` field (`"POST"` / `"COMMENT"` /
+   `"REPLY"`, carried through in `metadata`, not used for branching).
+   `messaging/scrapper_dto.py` translates it into our internal
+   `AnalysisRequest { id, text: str | None, video_url: str | None,
+   platform: Platform | None, metadata: dict }`: `message` becomes
+   `text`, `videoUrl` becomes `video_url` (passed through as-is
+   regardless of `type` — no assumption is made that only posts carry
+   video). Other DTO fields (`url`, `imageUrl`, `authorUsername`,
+   `authorName`, `views`, `likes`, `repliesCount`, `uploadedAt`,
+   `commentTo`) are carried through in `metadata` for traceability;
+   `imageUrl` is not otherwise processed (no image-only analysis path
+   exists — out of scope unless requested). Malformed messages
+   (parse/validation failure) are logged and skipped (committed, not
    retried).
 2. `pipeline.analyze(request)`:
    - If `video_url` is present:
@@ -306,38 +316,32 @@ single-topic/single-schema draft below with what it actually sends.
 **Incoming (confirmed against the Scrapper Backend's real source — see §9 for
 what's still open):**
 
-`post-scrapper-to-analysis` topic (`NormalizedPostDto`):
+`scrapper-to-analysis` topic (`NormalizedDataDto`) — merged from the
+earlier separate post/comment topics/DTOs:
 ```json
 {
   "id": "string",
-  "title": "string | null",
-  "postUrl": "string | null",
+  "platform": "twitter | tiktok | instagram | Facebook | ...",
+  "type": "POST | COMMENT | REPLY",
+  "message": "string | null",
+  "url": "string | null",
   "videoUrl": "string | null",
-  "channelUsername": "string | null",
-  "channelName": "string | null",
+  "imageUrl": "string | null",
+  "authorUsername": "string | null",
+  "authorName": "string | null",
   "views": 0,
   "likes": 0,
-  "comments": 0,
-  "uploadedAt": 0
+  "repliesCount": 0,
+  "uploadedAt": 0,
+  "commentTo": "string | null"
 }
 ```
 
-`comment-scrapper-to-analysis` topic (`NormalizedCommentDto`):
-```json
-{
-  "id": "string",
-  "postId": "string | null",
-  "text": "string | null",
-  "username": "string | null",
-  "likes": 0,
-  "replies": 0,
-  "createdAt": "string | null",
-  "hasMedia": false
-}
-```
-
-Neither carries a `platform` field — `AnalysisRequest.platform` is optional
-and unpopulated when built from real Kafka messages (see §5).
+`platform` (note the real, observed inconsistent casing for Facebook above)
+maps to `AnalysisRequest.platform`; unrecognized/absent values degrade to
+`None` rather than rejecting the message. `type`/`commentTo` and the other
+fields not otherwise consumed are carried through in `AnalysisRequest.metadata`
+(see §5 Steps).
 
 Outgoing result — schema unaffected by the above (this is our own
 `AnalysisResult` shape, published to a topic name that is **still a
@@ -463,26 +467,37 @@ in-process VLM.
   this is the bootstrap server for the sentiment analyzer's Kafka
   cluster. It must be supplied to the service via config/env (e.g.
   `KAFKA_BOOTSTRAP_SERVERS`), never hardcoded in source.
-- **Incoming Kafka topic names and message contract are now confirmed** —
-  read directly from the Scrapper Backend's source
-  (`C:\Users\kacang\IdeaProjects\scrapping-be`: `application.yml`,
-  `KafkaProducerService.java`, `NormalizedPostDto`/`NormalizedCommentDto`),
-  not assumed. See §5 for the confirmed shapes.
+- **Incoming Kafka topic name and message contract are confirmed, and have
+  already changed once** — read directly from the Scrapper Backend's
+  source (`C:\Users\kacang\IdeaProjects\scrapping-be`). Originally two
+  topics/DTOs (`post-scrapper-to-analysis`/`NormalizedPostDto`,
+  `comment-scrapper-to-analysis`/`NormalizedCommentDto`); as of the
+  Scrapper Backend's commit `599c58c` ("All works except consume from
+  analitics to sentimen be"), merged into one topic `scrapper-to-
+  analysis` and one DTO `NormalizedDataDto` (adds `platform` and `type`
+  fields that didn't exist before). See §5 for the current confirmed
+  shape. **Lesson learned: re-verify against the Scrapper Backend's
+  actual source before assuming this contract is still stable** — it is
+  still under active development by someone else.
 - **Outgoing (result) topic name is finalized on our side: `analysis-to-
   scrapper`** (`kafka_result_topic` in `config.py`) — this is our topic
-  to name, the same way the Scrapper Backend named its own two topics
-  (`post-scrapper-to-analysis` / `comment-scrapper-to-analysis`); the
-  name mirrors that convention in reverse. What's still pending is
-  **provisioning it on the broker** — devops (who administers Kafka, not
-  us) needs to create this topic, the same way the Scrapper Backend's
-  two topics were provisioned. Hand-off note for devops: *"Please create
-  Kafka topic `analysis-to-scrapper` on `172.16.16.100:21000`, using the
-  same conventions (partitions/replication) as `post-scrapper-to-
-  analysis`/`comment-scrapper-to-analysis`."* The Scrapper Backend's
+  to name, the same way the Scrapper Backend named its own topic. What's
+  still pending is **provisioning it on the broker** — devops (who
+  administers Kafka, not us) needs to create this topic, the same way
+  the Scrapper Backend's topic was provisioned. Hand-off note for
+  devops: *"Please create Kafka topic `analysis-to-scrapper` on
+  `172.16.16.100:21000`, using the same conventions (partitions/
+  replication) as `scrapper-to-analysis`."* The Scrapper Backend's
   source still has no `@Incoming` Kafka channel at all yet (only
   `@Outgoing` producers), so there is no consumer on its side for our
   results yet — that remains the Scrapper Backend developer's own work,
-  not something this project or devops needs to build.
+  not something this project or devops needs to build. **`AnalysisResult`'s
+  schema is deliberately left unchanged** (see §5) — no `source`/type-
+  indicator field was added to distinguish a post- vs. comment- vs.
+  reply-derived result, specifically so the Scrapper Backend's future
+  consumer isn't required to handle anything beyond correlating by `id`
+  (a decision made explicitly to avoid imposing any change on that side
+  beyond building the consumer itself).
   **`AnalysisResult`'s schema is deliberately left unchanged** (see §5) —
   no `source`/type-indicator field was added to distinguish a
   post-derived result from a comment-derived one, specifically so the

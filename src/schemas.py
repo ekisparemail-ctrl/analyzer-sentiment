@@ -18,10 +18,11 @@ class Status(StrEnum):
 
 class AnalysisRequest(BaseModel):
     id: str
-    # Neither of the Scrapper Backend's real Kafka message shapes
-    # (NormalizedPostDto, NormalizedCommentDto) carries a platform field, so this
-    # is optional and currently always None when built from real Kafka messages
-    # (see messaging/scrapper_dto.py). Kept for callers that do know the platform.
+    # Optional: the Scrapper Backend's Kafka message (NormalizedDataDto) does
+    # carry a platform field and it is populated from real Kafka messages
+    # (see messaging/scrapper_dto.py) -- stays optional because it's still
+    # not guaranteed/used for branching, and to keep this schema tolerant of
+    # callers that don't know the platform.
     platform: Platform | None = None
     text: str | None = None
     video_url: str | None = None

@@ -1,105 +1,109 @@
-from messaging.scrapper_dto import (
-    NormalizedComment,
-    NormalizedPost,
-    request_from_comment,
-    request_from_post,
-)
+from messaging.scrapper_dto import NormalizedData, request_from_normalized_data
+from schemas import Platform
 
 
-def test_normalized_post_parses_camel_case_json_from_scrapper_be() -> None:
-    post = NormalizedPost(
+def test_normalized_data_parses_camel_case_json_from_scrapper_be() -> None:
+    data = NormalizedData(
         **{
-            "id": "post-1",
-            "title": "Contoh judul post",
-            "postUrl": "https://tiktok.com/@user/video/1",
+            "id": "item-1",
+            "platform": "twitter",
+            "type": "POST",
+            "message": "Contoh teks postingan",
+            "url": "https://twitter.com/user/status/1",
             "videoUrl": "https://cdn.example.com/video1.mp4",
-            "channelUsername": "user",
-            "channelName": "User Name",
+            "imageUrl": "https://cdn.example.com/image1.jpg",
+            "authorUsername": "user",
+            "authorName": "User Name",
             "views": 100,
             "likes": 10,
-            "comments": 2,
+            "repliesCount": 2,
             "uploadedAt": 1700000000,
+            "commentTo": None,
         }
     )
 
-    assert post.id == "post-1"
-    assert post.title == "Contoh judul post"
-    assert post.post_url == "https://tiktok.com/@user/video/1"
-    assert post.video_url == "https://cdn.example.com/video1.mp4"
-    assert post.channel_username == "user"
-    assert post.channel_name == "User Name"
-    assert post.views == 100
-    assert post.likes == 10
-    assert post.comments == 2
-    assert post.uploaded_at == 1700000000
+    assert data.id == "item-1"
+    assert data.platform == "twitter"
+    assert data.type == "POST"
+    assert data.message == "Contoh teks postingan"
+    assert data.url == "https://twitter.com/user/status/1"
+    assert data.video_url == "https://cdn.example.com/video1.mp4"
+    assert data.image_url == "https://cdn.example.com/image1.jpg"
+    assert data.author_username == "user"
+    assert data.author_name == "User Name"
+    assert data.views == 100
+    assert data.likes == 10
+    assert data.replies_count == 2
+    assert data.uploaded_at == 1700000000
+    assert data.comment_to is None
 
 
-def test_normalized_post_allows_missing_video_url() -> None:
-    post = NormalizedPost(**{"id": "post-2", "title": "Tanpa video"})
+def test_normalized_data_allows_missing_optional_fields() -> None:
+    data = NormalizedData(**{"id": "item-2"})
 
-    assert post.video_url is None
+    assert data.video_url is None
+    assert data.platform is None
+    assert data.type is None
 
 
-def test_normalized_comment_parses_camel_case_json_from_scrapper_be() -> None:
-    comment = NormalizedComment(
+def test_request_from_normalized_data_maps_message_to_text_and_video_url() -> None:
+    data = NormalizedData(
         **{
-            "id": "comment-1",
-            "postId": "post-1",
-            "text": "Komentar contoh",
-            "username": "commenter",
-            "likes": 3,
-            "replies": 1,
-            "createdAt": "2025-01-01T00:00:00Z",
-            "hasMedia": False,
-        }
-    )
-
-    assert comment.id == "comment-1"
-    assert comment.post_id == "post-1"
-    assert comment.text == "Komentar contoh"
-    assert comment.username == "commenter"
-    assert comment.likes == 3
-    assert comment.replies == 1
-    assert comment.created_at == "2025-01-01T00:00:00Z"
-    assert comment.has_media is False
-
-
-def test_request_from_post_uses_title_as_text_and_carries_video_url() -> None:
-    post = NormalizedPost(
-        **{
-            "id": "post-1",
-            "title": "Judul post",
+            "id": "item-1",
+            "platform": "tiktok",
+            "type": "POST",
+            "message": "Judul post",
             "videoUrl": "https://cdn.example.com/video1.mp4",
-            "channelUsername": "user",
         }
     )
 
-    request = request_from_post(post)
+    request = request_from_normalized_data(data)
 
-    assert request.id == "post-1"
+    assert request.id == "item-1"
     assert request.text == "Judul post"
     assert request.video_url == "https://cdn.example.com/video1.mp4"
+    assert request.platform == Platform.TIKTOK
+
+
+def test_request_from_normalized_data_normalizes_facebook_casing() -> None:
+    # Scrapper Backend's own Platform enum inconsistently serializes Facebook
+    # as "Facebook" (capitalized) while every other platform is lowercase.
+    data = NormalizedData(**{"id": "item-1", "platform": "Facebook", "message": "x"})
+
+    request = request_from_normalized_data(data)
+
+    assert request.platform == Platform.FACEBOOK
+
+
+def test_request_from_normalized_data_returns_none_platform_for_unrecognized_value() -> None:
+    data = NormalizedData(**{"id": "item-1", "platform": "myspace", "message": "x"})
+
+    request = request_from_normalized_data(data)
+
     assert request.platform is None
-    assert request.metadata["channel_username"] == "user"
 
 
-def test_request_from_post_without_video_url_leaves_video_url_none() -> None:
-    post = NormalizedPost(**{"id": "post-2", "title": "Tanpa video"})
+def test_request_from_normalized_data_returns_none_platform_when_absent() -> None:
+    data = NormalizedData(**{"id": "item-1", "message": "x"})
 
-    request = request_from_post(post)
+    request = request_from_normalized_data(data)
 
-    assert request.video_url is None
+    assert request.platform is None
 
 
-def test_request_from_comment_uses_text_and_never_has_video_url() -> None:
-    comment = NormalizedComment(
-        **{"id": "comment-1", "postId": "post-1", "text": "Komentar contoh"}
+def test_request_from_normalized_data_carries_extra_fields_into_metadata() -> None:
+    data = NormalizedData(
+        **{
+            "id": "item-1",
+            "type": "COMMENT",
+            "message": "Komentar",
+            "commentTo": "item-0",
+            "authorUsername": "commenter",
+        }
     )
 
-    request = request_from_comment(comment)
+    request = request_from_normalized_data(data)
 
-    assert request.id == "comment-1"
-    assert request.text == "Komentar contoh"
-    assert request.video_url is None
-    assert request.platform is None
-    assert request.metadata["post_id"] == "post-1"
+    assert request.metadata["type"] == "COMMENT"
+    assert request.metadata["comment_to"] == "item-0"
+    assert request.metadata["author_username"] == "commenter"

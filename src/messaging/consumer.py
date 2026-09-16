@@ -4,12 +4,7 @@ import logging
 from confluent_kafka import Consumer, KafkaException
 from pydantic import ValidationError
 
-from messaging.scrapper_dto import (
-    NormalizedComment,
-    NormalizedPost,
-    request_from_comment,
-    request_from_post,
-)
+from messaging.scrapper_dto import NormalizedData, request_from_normalized_data
 from schemas import AnalysisRequest
 
 logger = logging.getLogger(__name__)
@@ -20,15 +15,7 @@ class CommitError(Exception):
 
 
 class KafkaRequestConsumer:
-    def __init__(
-        self,
-        bootstrap_servers: str,
-        post_topic: str,
-        comment_topic: str,
-        group_id: str,
-    ) -> None:
-        self._post_topic = post_topic
-        self._comment_topic = comment_topic
+    def __init__(self, bootstrap_servers: str, topic: str, group_id: str) -> None:
         self._consumer = Consumer(
             {
                 "bootstrap.servers": bootstrap_servers,
@@ -37,7 +24,7 @@ class KafkaRequestConsumer:
                 "enable.auto.commit": False,
             }
         )
-        self._consumer.subscribe([post_topic, comment_topic])
+        self._consumer.subscribe([topic])
 
     def poll_request(self, timeout: float) -> tuple[AnalysisRequest, object] | None:
         msg = self._consumer.poll(timeout)
@@ -52,15 +39,7 @@ class KafkaRequestConsumer:
                 self.commit(msg)
                 return None
             data = json.loads(msg_value.decode("utf-8"))
-            topic = msg.topic()
-            if topic == self._post_topic:
-                request = request_from_post(NormalizedPost(**data))
-            elif topic == self._comment_topic:
-                request = request_from_comment(NormalizedComment(**data))
-            else:
-                logger.warning("Skipping message from unexpected topic: %s", topic)
-                self.commit(msg)
-                return None
+            request = request_from_normalized_data(NormalizedData(**data))
         except (json.JSONDecodeError, ValidationError, UnicodeDecodeError, TypeError) as e:
             logger.warning("Skipping malformed message: %s", e)
             self.commit(msg)

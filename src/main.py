@@ -107,19 +107,17 @@ def main() -> None:
     deps = build_dependencies(settings)
     consumer = KafkaRequestConsumer(
         settings.kafka_bootstrap_servers,
-        settings.kafka_post_topic,
-        settings.kafka_comment_topic,
+        settings.kafka_scrapper_topic,
         settings.kafka_consumer_group,
     )
     producer = KafkaResultProducer(
         settings.kafka_bootstrap_servers, settings.kafka_result_topic
     )
     logger.info(
-        "Starting Analytics Backend (kafka_bootstrap_servers=%s, post_topic=%s, "
-        "comment_topic=%s, result_topic=%s)",
+        "Starting Analytics Backend (kafka_bootstrap_servers=%s, scrapper_topic=%s, "
+        "result_topic=%s)",
         settings.kafka_bootstrap_servers,
-        settings.kafka_post_topic,
-        settings.kafka_comment_topic,
+        settings.kafka_scrapper_topic,
         settings.kafka_result_topic,
     )
     run_forever(consumer, producer, deps)
