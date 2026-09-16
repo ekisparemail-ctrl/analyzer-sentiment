@@ -544,20 +544,34 @@ local VLM's load cost at startup.
   config default (`VLM_MODEL_ID`), swappable without code changes if a
   different model proves more accurate/faster once real latency is
   measured.
-  **Real latency measured (2026-09-16):** a real ~30s TikTok clip at the
-  original `MAX_FRAMES=32` default took over 20 minutes end to end on this
-  CPU-only machine — every frame is encoded by the VLM's vision tower
-  before generation can even start, so frame count is the main lever over
-  response time. `MAX_FRAMES` default lowered to `8` accordingly (trades
-  off coarser video understanding for speed; raise it back up once this is
-  re-measured or if a GPU path becomes viable — see the AMD/DirectML note
-  below). GPU acceleration was investigated and rejected for now: this
-  machine's only GPU is an integrated AMD one, and DirectML (the only
-  Windows-compatible acceleration path for AMD, since ROCm doesn't support
-  Windows) caps out at PyTorch 2.2 and Python 3.12, both older than what
-  this project requires (`torch>=2.6` for CVE-2025-32434, Python 3.13
-  venv) — revisit only if DirectML support catches up, or if the machine
-  gains an NVIDIA GPU (CUDA path).
+  **Real latency measured (2026-09-16), with a real 7:23-long TikTok
+  video:** at the original `MAX_FRAMES=32` default, over 20 minutes end
+  to end, and full-resolution video frames (untouched by `video/
+  frames.py`, native video resolution) made LLaVA-OneVision's anyres
+  image tiling overflow the model's 32768-token context window with as
+  few as 8 frames ("Token indices sequence length is longer than the
+  specified maximum sequence length... Running this sequence through
+  the model will result in indexing errors") — a correctness risk, not
+  just a slowness one. Two fixes: `MAX_FRAMES` default lowered to `8`
+  (frame count is a direct lever over response time — every frame is
+  encoded by the VLM's vision tower before generation can even start),
+  and `ai/vlm_local.py` now downscales every frame to fit within 448px
+  on its longest side before inference (tiling, and therefore token
+  count, scales with input resolution regardless of the source video's
+  actual size). With both fixes, the same video: `status: "ok"` (not
+  `"partial"` — video analysis now actually succeeds), ~9 minutes end to
+  end (VLM inference ~6.5 min, whisper transcription ~1.7 min for the
+  full 7:23 audio, downloads/LLM calls/frame extraction the rest). VLM
+  inference remains the dominant cost; raise `MAX_FRAMES`/the resize
+  dimension back up only after re-measuring, or if a GPU path becomes
+  viable — see the AMD/DirectML note below. GPU acceleration was
+  investigated and rejected for now: this machine's only GPU is an
+  integrated AMD one, and DirectML (the only Windows-compatible
+  acceleration path for AMD, since ROCm doesn't support Windows) caps
+  out at PyTorch 2.2 and Python 3.12, both older than what this project
+  requires (`torch>=2.6` for CVE-2025-32434, Python 3.13 venv) —
+  revisit only if DirectML support catches up, or if the machine gains
+  an NVIDIA GPU (CUDA path).
 - **New dependencies added for the in-process VLM:** `torch`,
   `transformers`, `pillow` (`ai/vlm_local.py`). Per Acme's security
   standard (dependency additions are a decision, not a default): `torch`
