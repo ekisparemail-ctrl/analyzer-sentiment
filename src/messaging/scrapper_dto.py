@@ -1,4 +1,6 @@
-from pydantic import BaseModel, ConfigDict, Field
+from datetime import datetime
+
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from schemas import AnalysisRequest, Platform
 
@@ -28,6 +30,26 @@ class NormalizedData(BaseModel):
     replies_count: int | None = Field(default=None, alias="repliesCount")
     uploaded_at: int | None = Field(default=None, alias="uploadedAt")
     comment_to: str | None = Field(default=None, alias="commentTo")
+
+    @field_validator("uploaded_at", mode="before")
+    @classmethod
+    def _normalize_uploaded_at(cls, value: object) -> object:
+        # The Scrapper Backend inconsistently serializes uploadedAt: an epoch
+        # integer for some items, an ISO-8601 string ("...T...Z") for others
+        # (observed for TikTok comments). This field is carried through only
+        # for traceability (see request_from_normalized_data), so normalize
+        # it to epoch seconds -- or drop it to None if it's neither -- rather
+        # than rejecting the entire message over one non-critical field.
+        if not isinstance(value, str):
+            return value
+        try:
+            return int(value)
+        except ValueError:
+            pass
+        try:
+            return int(datetime.fromisoformat(value.replace("Z", "+00:00")).timestamp())
+        except ValueError:
+            return None
 
 
 def _parse_platform(raw: str | None) -> Platform | None:

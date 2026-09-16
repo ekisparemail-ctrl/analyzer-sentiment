@@ -1,4 +1,5 @@
 import json
+from datetime import UTC, datetime
 
 from messaging.scrapper_dto import NormalizedData, request_from_normalized_data
 from schemas import Platform
@@ -46,6 +47,33 @@ def test_normalized_data_allows_missing_optional_fields() -> None:
     assert data.video_url is None
     assert data.platform is None
     assert data.type is None
+
+
+def test_normalized_data_parses_uploaded_at_as_epoch_integer() -> None:
+    data = NormalizedData(**{"id": "item-1", "uploadedAt": 1700000000})
+
+    assert data.uploaded_at == 1700000000
+
+
+def test_normalized_data_normalizes_iso_timestamp_uploaded_at_to_epoch_seconds() -> None:
+    # Real production payload (docs/issue-findings.md): some Scrapper Backend
+    # items (observed for TikTok comments) send uploadedAt as an ISO-8601
+    # string ("2026-09-11T11:45:14.000Z") instead of the epoch integer other
+    # items use -- rejecting the whole message over this one metadata-only
+    # field would lose real data, so normalize instead of failing validation.
+    raw = "2026-09-11T11:45:14.000Z"
+    expected = int(datetime.fromisoformat(raw.replace("Z", "+00:00")).timestamp())
+
+    data = NormalizedData(**{"id": "item-1", "uploadedAt": raw})
+
+    assert data.uploaded_at == expected
+    assert datetime.fromtimestamp(data.uploaded_at, tz=UTC).year == 2026
+
+
+def test_normalized_data_degrades_unparseable_uploaded_at_to_none() -> None:
+    data = NormalizedData(**{"id": "item-1", "uploadedAt": "not-a-timestamp"})
+
+    assert data.uploaded_at is None
 
 
 def test_request_from_normalized_data_maps_message_to_text_and_video_url() -> None:
