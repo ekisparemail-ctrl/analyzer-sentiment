@@ -41,7 +41,16 @@ class KafkaRequestConsumer:
             data = json.loads(msg_value.decode("utf-8"))
             request = request_from_normalized_data(NormalizedData(**data))
         except (json.JSONDecodeError, ValidationError, UnicodeDecodeError, TypeError) as e:
-            logger.warning("Skipping malformed message: %s", e)
+            # partition/offset logged so a skipped-and-committed message can
+            # be found and, if the underlying bug gets fixed later, targeted
+            # for a manual consumer-group offset reset to reprocess it --
+            # otherwise it's silently gone (offset already advanced past it).
+            logger.warning(
+                "Skipping malformed message (partition=%s offset=%s): %s",
+                msg.partition(),
+                msg.offset(),
+                e,
+            )
             self.commit(msg)
             return None
         # TEMPORARY (dev-only, remove once Kafka integration is verified in
@@ -50,8 +59,11 @@ class KafkaRequestConsumer:
         # are user-generated post/comment data (Acme security standard:
         # never log PII / user data bodies), so only shape/size is logged.
         logger.info(
-            "Consumed request id=%s platform=%s type=%s has_video=%s text_len=%s",
+            "Consumed request id=%s partition=%s offset=%s platform=%s type=%s "
+            "has_video=%s text_len=%s",
             request.id,
+            msg.partition(),
+            msg.offset(),
             request.platform,
             request.metadata.get("type"),
             request.video_url is not None,

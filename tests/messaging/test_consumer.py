@@ -1,4 +1,5 @@
 import json
+import logging
 from unittest.mock import MagicMock
 
 import pytest
@@ -33,11 +34,15 @@ def test_poll_request_returns_none_when_nothing_polled(monkeypatch: pytest.Monke
     assert result is None
 
 
-def test_poll_request_parses_valid_message(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_poll_request_parses_valid_message(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
     consumer, fake_consumer_instance = _make_consumer(monkeypatch)
 
     fake_msg = MagicMock()
     fake_msg.error.return_value = None
+    fake_msg.partition.return_value = 0
+    fake_msg.offset.return_value = 42
     fake_msg.value.return_value = json.dumps(
         {
             "id": "item-1",
@@ -49,7 +54,8 @@ def test_poll_request_parses_valid_message(monkeypatch: pytest.MonkeyPatch) -> N
     ).encode("utf-8")
     fake_consumer_instance.poll.return_value = fake_msg
 
-    result = consumer.poll_request(1.0)
+    with caplog.at_level(logging.INFO):
+        result = consumer.poll_request(1.0)
 
     assert result is not None
     request, msg = result
@@ -58,20 +64,33 @@ def test_poll_request_parses_valid_message(monkeypatch: pytest.MonkeyPatch) -> N
     assert request.video_url == "https://cdn.example.com/v.mp4"
     assert msg is fake_msg
     fake_consumer_instance.commit.assert_not_called()
+    # partition/offset must be logged -- this is exactly what let a real
+    # incident (docs/issue-findings.md) be diagnosed as "already caught up",
+    # not "stuck", and is needed to target a manual offset reset if a
+    # skipped-and-committed message needs reprocessing after a bug fix.
+    assert "partition=0" in caplog.text
+    assert "offset=42" in caplog.text
 
 
-def test_poll_request_skips_and_commits_malformed_message(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_poll_request_skips_and_commits_malformed_message(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
     consumer, fake_consumer_instance = _make_consumer(monkeypatch)
 
     fake_msg = MagicMock()
     fake_msg.error.return_value = None
+    fake_msg.partition.return_value = 0
+    fake_msg.offset.return_value = 43
     fake_msg.value.return_value = b"not json"
     fake_consumer_instance.poll.return_value = fake_msg
 
-    result = consumer.poll_request(1.0)
+    with caplog.at_level(logging.WARNING):
+        result = consumer.poll_request(1.0)
 
     assert result is None
     fake_consumer_instance.commit.assert_called_once_with(message=fake_msg, asynchronous=False)
+    assert "partition=0" in caplog.text
+    assert "offset=43" in caplog.text
 
 
 def test_poll_request_skips_and_commits_message_missing_required_id(
