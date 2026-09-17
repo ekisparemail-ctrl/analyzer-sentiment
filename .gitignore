@@ -10,3 +10,6 @@ __pycache__/
 .superpowers/
 .worktrees/
 .idea/
+# Dev-only local AnalysisResult dumps (DEV_DUMP_OUTPUT, spec revision-1 section 6) --
+# never meant to be committed.
+output/

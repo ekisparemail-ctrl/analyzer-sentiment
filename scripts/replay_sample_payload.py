@@ -26,7 +26,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
 from config import Settings  # noqa: E402
-from main import build_dependencies  # noqa: E402
+from main import _dump_result_for_dev, build_dependencies  # noqa: E402
 from messaging.scrapper_dto import NormalizedData, requests_from_normalized_data  # noqa: E402
 from pipeline.analyze import analyze  # noqa: E402
 
@@ -88,6 +88,14 @@ def main() -> None:
             result.error,
         )
         print(json.dumps(result.model_dump(mode="json"), indent=2, ensure_ascii=False))
+
+        # Mirror main.py's run_once() dev-dump behavior (spec revision-1
+        # section 6) so a replay run is also useful for verifying
+        # DEV_DUMP_OUTPUT end to end -- this script never publishes to
+        # Kafka, so without this the dump would be the only way to inspect
+        # a replayed result from disk afterward.
+        if settings.dev_dump_output:
+            _dump_result_for_dev(result, "output")
 
 
 if __name__ == "__main__":

@@ -189,32 +189,16 @@ logic orkestrasi) di-test penuh lewat `AnalyzerModels` palsu. Kalau menambah dep
 baru yang "berat" (model, koneksi eksternal), pertimbangkan pola yang sama: pisahkan
 "cara memuat/memanggil resource berat" dari "logic yang memakainya".
 
-### Model lokal (transformers, faster-whisper) — pisahkan "load" dari "call"
+### Model lokal (faster-whisper) — pisahkan "load" dari "call"
 
-`ai/vlm_local.py` mengikuti pola yang sama, tapi satu tingkat lebih dalam:
-`load_local_vlm(model_id)` (panggilan `from_pretrained()` yang asli — lambat, butuh
-bobot model asli) **tidak** ditest, tapi `describe_images(vlm, ...)` (logic
-glue: membangun format chat multi-image, memanggil `generate()`, decode hasil) **ditest
-penuh** dengan `model`/`processor` palsu (`MagicMock`), bukan lewat dependency-injection
-callable seperti `AnalyzerModels` di atas — karena bentuk API `transformers` (dict
-input, tensor output, slicing berdasarkan panjang prompt) sendiri yang mau divalidasi:
-
-```python
-processor = MagicMock()
-processor.apply_chat_template.return_value = "PROMPT_TEXT"
-processor.return_value = {"input_ids": torch.zeros((1, 3), dtype=torch.long)}
-processor.batch_decode.return_value = ["hasil deskripsi"]
-
-model = MagicMock()
-model.generate.return_value = torch.zeros((1, 8), dtype=torch.long)
-```
-
-Pakai tensor `torch` asli (bukan `MagicMock` polos) untuk bagian yang di-slice
-(`output_ids[:, inputs["input_ids"].shape[1]:]`) — ini membuktikan logic
-pemotongan prompt-token benar-benar jalan, bukan cuma "tidak error karena semuanya
-mock". Gambar uji dibuat lewat `PIL.Image` asli (`Image.new(...).save(buf, "JPEG")`),
-bukan bytes acak, karena `describe_images()` benar-benar memanggil
-`Image.open()`/`.convert("RGB")`.
+*(Riwayat: sebelum revisi terbaru, modul VLM in-process yang sudah dihapus juga
+mengikuti pola ini satu tingkat lebih dalam — pemuatan model tidak ditest,
+`describe_images(vlm, ...)` ditest penuh dengan `model`/`processor` palsu bergaya
+`transformers`. Modul itu sudah dihapus (VLM kembali jadi HTTP client jarak jauh,
+lihat spec revision-1 §0/§3.2), jadi pola ini sekarang hanya berlaku untuk
+`load_models()`'s whisper loading di atas.
+`ai/vlm_client.py`'s test sekarang ikut pola HTTP client (`respx`) seperti
+`ai/llm_client.py`, lihat bagian "HTTP client (httpx)" di atas.)*
 
 ## Kelas bug yang harus selalu dicek: return value / state ambigu yang didiskon diam-diam
 
@@ -314,9 +298,12 @@ Scrapper BE            Analytics Backend (project ini, semua lokal)          Mac
     │                              │                                            │
     │                              │ 3. jika video_url ada:                     │
     │                              │    a. download_video() (yt-dlp)            │
-    │                              │    b. extract_frames() (ffmpeg, lokal)     │
-    │                              │    c. describe_images() (ai/vlm_local.py,  │
-    │                              │       in-process, CPU, tanpa jaringan)      │
+    │                              │    b. extract_frames() (ffmpeg, lokal,     │
+    │                              │       grayscale-difference keyframe        │
+    │                              │       selection -- lihat poin berikutnya)  │
+    │                              │    c. describe_images() (ai/vlm_client.py, │
+    │                              │       batch per VLM_BATCH_SIZE) ───────────┤──► VLM (HTTP,
+    │                              │◄────────────────────────────────────────────┤  LM Studio)
     │                              │    d. transcribe() (faster-whisper,        │
     │                              │       lokal, CPU)                          │
     │                              │                                            │
@@ -329,11 +316,23 @@ Scrapper BE            Analytics Backend (project ini, semua lokal)          Mac
     │                              │◄────────────────────────────────────────────┤ sentiment/
     │                              │                                            │  emotion/motivation
     │                              │ 6. producer.publish(AnalysisResult)        │
-    │  7. consume hasil            │    (langkah 3-6 diulang untuk TIAP item    │
-    │   (Kafka: topic response)    │     dari langkah 2 -- post lalu tiap       │
-    │◄─────────────────────────────┤     comment -- baru consumer.commit(msg)   │
-    │                              │     SEKALI di akhir untuk semuanya)        │
+    │  7. consume hasil            │    (+ dev-only dump ke output/ kalau       │
+    │   (Kafka: topic response)    │    DEV_DUMP_OUTPUT=true -- langkah 3-6     │
+    │◄─────────────────────────────┤    diulang untuk TIAP item dari langkah 2  │
+    │                              │    -- post lalu tiap comment -- baru       │
+    │                              │    consumer.commit(msg) SEKALI di akhir    │
+    │                              │    untuk semuanya)                         │
 ```
+
+Sejak revisi ini (lihat `docs/superpowers/specs/2026-09-17-analytics-backend-design-revision-1.md`),
+VLM kembali menjadi panggilan HTTP jarak jauh (bukan lagi in-process/CPU seperti
+revisi sebelumnya) — endpoint LM Studio yang sama yang sudah dipakai untuk sentiment
+analysis (`VLM_BASE_URL`/`VLM_MODEL`, model `qwen3-vl-8b-instruct-mlx` di deployment
+ini), tapi konfigurasi terpisah dari `LLM_BASE_URL`/`LLM_MODEL` supaya keduanya bisa
+diarahkan ke tempat berbeda tanpa perubahan kode. Keyframe yang dipilih dikirim ke
+VLM dalam **batch** (beberapa gambar per panggilan HTTP, bukan satu panggilan per
+frame) — ukuran batch dan on/off-nya dikonfigurasi lewat `VLM_BATCH_SIZE`/
+`VLM_BATCH_ENABLED`.
 
 Satu pesan Kafka sekarang bisa menghasilkan lebih dari satu `AnalysisResult`
 (post + N komentar) — offset cuma di-commit setelah **semuanya** berhasil
@@ -344,9 +343,9 @@ dikorelasikan lewat `id`, republish bukan masalah).
 Setiap tahap (2-6) sudah ditest terisolasi lewat unit test (lihat bagian di atas).
 Pengujian manual ini memverifikasi bahwa tahap-tahap itu benar saat dirangkai dengan
 infrastruktur sungguhan, plus perilaku yang cuma muncul di integrasi nyata: konten
-`.env` yang valid, `ffmpeg` yang benar-benar terpasang, model VLM/whisper yang
+`.env` yang valid, `ffmpeg` yang benar-benar terpasang, model whisper yang
 benar-benar ter-download dan bisa jalan di CPU mesin ini, koneksi jaringan ke Mac
-Studio untuk LLM saja, dan format pesan Kafka yang sungguhan cocok dengan
+Studio untuk LLM **dan** VLM, dan format pesan Kafka yang sungguhan cocok dengan
 `AnalysisRequest`/`AnalysisResult`.
 
 ### Prasyarat & konfigurasi tambahan
@@ -364,28 +363,50 @@ Sebelum menjalankan pengujian manual ini, pastikan semua ini tersedia:
   default: `scrapper-to-analysis` (request, `KAFKA_SCRAPPER_TOPIC`) dan
   `analysis-to-scrapper` (response, `KAFKA_RESULT_TOPIC`) — bisa diubah lewat env,
   lihat `.env.example`.
-- **LM Studio berjalan di Mac Studio** dengan model LLM sudah di-load, dan endpoint-nya
-  bisa diakses dari mesin ini (`LLM_BASE_URL`, format OpenAI-compatible, contoh:
-  `http://<ip-mac-studio>:1234/v1`). Ini satu-satunya bagian pipeline yang masih
-  memanggil Mac Studio — VLM sekarang berjalan lokal (lihat poin berikutnya).
-- **VLM berjalan in-process, CPU-only, di mesin ini sendiri** — tidak ada endpoint
-  atau konfigurasi jaringan yang perlu disiapkan devops. `VLM_MODEL_ID` (default
-  `llava-hf/llava-onevision-qwen2-0.5b-ov-hf`) akan otomatis ter-download dari
-  HuggingFace Hub ke cache lokal saat pertama kali `load_models()` dipanggil (butuh
-  koneksi internet sekali di awal, dan dependency `torch`+`transformers`+`pillow`
-  ter-install — lihat `requirements.txt`). Karena CPU-only, inferensi VLM bisa
-  memakan waktu signifikan per frame batch — belum ada angka latency resmi untuk
-  model default ini; kalau lambat, pertimbangkan mengecilkan `MAX_FRAMES` dulu
-  sebelum mengganti model (spec §9).
-- **Model `faster-whisper`** juga otomatis ter-download ke cache lokal saat pertama
-  kali `load_models()` dipanggil (ukuran tergantung `WHISPER_MODEL_SIZE`, default
-  `base`). Untuk pengujian pertama kali, jalankan service dan tunggu sampai **kedua**
-  model (VLM + whisper) selesai di-download/di-load sebelum mengirim pesan test —
-  cek log startup.
+- **LM Studio berjalan di Mac Studio** dengan model LLM **dan** VLM sudah di-load,
+  dan kedua endpoint-nya bisa diakses dari mesin ini (`LLM_BASE_URL`/`VLM_BASE_URL`,
+  format OpenAI-compatible, contoh: `http://<ip-mac-studio>:1234/v1`). Sejak revisi
+  ini VLM kembali menjadi panggilan HTTP jarak jauh (bukan in-process/CPU seperti
+  revisi sebelumnya) — di deployment ini `VLM_BASE_URL`/`VLM_MODEL` menunjuk ke LM
+  Studio instance yang sama dengan `LLM_BASE_URL`/`LLM_MODEL` (model
+  `qwen3-vl-8b-instruct-mlx`), tapi tetap dua entri config terpisah supaya bisa
+  dipisah nanti tanpa perubahan kode.
+- **Keyframe selection sekarang berbasis grayscale-difference scoring**
+  (`video/frames.py`), menggantikan uniform time-based sampling revisi
+  sebelumnya — `ffmpeg` mengekstrak kandidat frame di sampling rate lebih tinggi
+  dari target akhir, tiap kandidat dibandingkan dengan kandidat sebelumnya (bukan
+  keyframe terakhir yang *kept*) lewat mean-absolute-difference grayscale, dan
+  cuma disimpan sebagai keyframe kalau skornya melebihi `KEYFRAME_DIFF_THRESHOLD`
+  (default `10.0`), dibatasi maksimum `MAX_FRAMES`. Video yang secara visual statis
+  bisa saja menghasilkan nol keyframe — ini perilaku yang disengaja (degrade ke
+  transcript-only), bukan bug.
+- **Keyframe dikirim ke VLM dalam batch** (`ai/vlm_client.py` + orkestrasi batching
+  di `video/analyzer.py`): `VLM_BATCH_ENABLED=true` (default) mengelompokkan
+  keyframe menjadi batch berisi `VLM_BATCH_SIZE` (default `4`) gambar per panggilan
+  HTTP; `VLM_BATCH_ENABLED=false` mengirim semua keyframe dalam satu panggilan.
+  Deskripsi per-batch digabung (dengan prefix rentang frame) menjadi satu deskripsi
+  visual sebelum diteruskan ke `summarize_video()` seperti biasa.
+- **`ffmpeg` decode punya opsi hardware-acceleration CUDA opsional**
+  (`FFMPEG_HWACCEL_CUDA`, default `false`) — menambahkan `-hwaccel cuda
+  -hwaccel_output_format cuda` ke invocation `ffmpeg`. Cuma berguna di mesin dengan
+  GPU NVIDIA dan build `ffmpeg` yang mendukung CUDA; belum pernah diverifikasi jalan
+  di mesin manapun yang dipakai project ini sejauh ini (spec revision-1 §9) — set
+  `false` kalau tidak yakin.
+- **Model `faster-whisper`** otomatis ter-download ke cache lokal saat pertama kali
+  `load_models()` dipanggil (ukuran tergantung `WHISPER_MODEL_SIZE`, default
+  `base`). Untuk pengujian pertama kali, jalankan service dan tunggu sampai model
+  whisper selesai di-download/di-load sebelum mengirim pesan test — cek log
+  startup. (VLM tidak lagi punya model lokal untuk di-load — lihat poin di atas.)
 - **File `.env`** disalin dari `.env.example` (di root project, sejajar dengan
   `src/`) dan diisi nilai asli (bukan placeholder): `KAFKA_BOOTSTRAP_SERVERS`,
-  `LLM_BASE_URL`, `LLM_MODEL`, `VLM_MODEL_ID` (opsional, ada default), dan lainnya
-  sesuai kebutuhan. `Settings` (`src/config.py`) otomatis membaca file `.env` ini kalau
+  `LLM_BASE_URL`, `LLM_MODEL`, `VLM_BASE_URL`, `VLM_MODEL`, dan lainnya sesuai
+  kebutuhan — termasuk yang baru di revisi ini: `KEYFRAME_DIFF_THRESHOLD`,
+  `FFMPEG_HWACCEL_CUDA`, `VLM_BATCH_ENABLED`, `VLM_BATCH_SIZE`, dan
+  `DEV_DUMP_OUTPUT` (dev-only: kalau `true`, tiap item yang diproses juga ditulis
+  ke `output/output-<id>-<timestamp>.json`, selain tetap dipublish ke Kafka seperti
+  biasa — berguna untuk inspeksi lokal tanpa perlu consume topic response; lihat
+  `.env.example` untuk default dan penjelasan tiap variabel). `Settings`
+  (`src/config.py`) otomatis membaca file `.env` ini kalau
   ada di working directory saat `src/main.py` dijalankan (`env_file=".env"` di
   `SettingsConfigDict`) — tidak perlu export manual ke environment. Kalau
   sebuah env var **juga** di-set langsung di environment proses, nilai
@@ -525,10 +546,14 @@ diperlukan untuk memverifikasi integrasi Kafka yang sesungguhnya.
 
 3. **Amati log service** — setiap tahap alur di atas seharusnya meninggalkan jejak log
    (skip pesan malformed, error Kafka-level, kegagalan video yang di-degrade, status
-   akhir tiap item). Untuk video: proses download → ekstraksi frame → inferensi VLM
-   lokal → transkripsi whisper akan makan waktu beberapa detik hingga puluhan detik
-   tergantung ukuran video dan kecepatan CPU mesin ini (VLM dan whisper keduanya
-   jalan lokal sekarang, bukan cuma whisper).
+   akhir tiap item). Untuk video, perhatikan baris log baru di revisi ini secara
+   khusus: ekstraksi keyframe (`Extracted N keyframes (target was M)` — jumlah yang
+   *kept* harus jelas lebih kecil dari jumlah kandidat yang dipertimbangkan kalau
+   difference-scoring memang selektif) dan tiap batch VLM (`Sending VLM batch X/Y
+   (frames A-B, K images)...` diikuti `VLM batch X/Y complete.`). Proses keseluruhan
+   (download → ekstraksi frame → panggilan VLM jarak jauh → transkripsi whisper
+   lokal) akan makan waktu beberapa detik hingga puluhan detik tergantung ukuran
+   video, jumlah batch VLM, dan kecepatan CPU mesin ini untuk whisper.
 
 4. **Konsumsi topic response** untuk melihat hasilnya:
    ```python
@@ -559,9 +584,15 @@ diperlukan untuk memverifikasi integrasi Kafka yang sesungguhnya.
 
 - Sebelum deploy pertama kali ke lingkungan yang menjalankan Kafka/LM Studio/VLM
   sungguhan.
-- Setelah mengganti `VLM_MODEL_ID` ke model lain (mis. hasil spike latency
-  menunjukkan model default terlalu lambat/kurang akurat) — ulangi langkah di atas
-  untuk memastikan jalur video tetap `status: "ok"`.
+- Setelah mengganti `VLM_MODEL`/`VLM_BASE_URL` ke model atau endpoint lain (mis. hasil
+  spike latency menunjukkan model default terlalu lambat, atau menemukan model
+  "reasoning" yang mengembalikan `content` kosong meski response HTTP-nya sukses —
+  lihat spec revision-1 §8/§9) — ulangi langkah di atas untuk memastikan jalur video
+  tetap `status: "ok"` dan `content` dari tiap batch VLM benar-benar berisi teks.
+- Setelah mengubah `KEYFRAME_DIFF_THRESHOLD`, `VLM_BATCH_SIZE`/`VLM_BATCH_ENABLED`,
+  atau `FFMPEG_HWACCEL_CUDA` — ulangi langkah di atas dan cek baris log keyframe
+  selection/batch VLM (langkah 3) untuk memastikan perilakunya sesuai konfigurasi
+  baru.
 - Setelah perubahan apa pun ke `src/main.py`, `src/messaging/`, atau kontrak pesan di
   `src/schemas.py` — perubahan di area ini paling berisiko lolos dari unit test
   (yang semuanya mocked) tapi patah di integrasi nyata.
