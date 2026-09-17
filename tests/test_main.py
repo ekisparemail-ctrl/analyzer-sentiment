@@ -1,20 +1,24 @@
+import json
 import logging
+from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
 
 from ai.llm_client import SentimentAnalysis
 from config import Settings
-from main import _log_startup_banner, run_forever, run_once
+from main import _dump_result_for_dev, _log_startup_banner, run_forever, run_once
 from messaging.producer import PublishError
 from pipeline.analyze import AnalyzeDependencies
 from schemas import (
     AnalysisContext,
     AnalysisRequest,
+    AnalysisResult,
     EmotionResult,
     MotivationResult,
     Platform,
     SentimentResult,
+    Status,
 )
 from video.analyzer import VideoAnalysis
 
@@ -245,3 +249,93 @@ def test_run_forever_continues_after_a_non_interrupt_exception() -> None:
 
     assert call_count == 2
     consumer.close.assert_called_once()
+
+
+def test_dump_result_for_dev_writes_expected_file(tmp_path: Path) -> None:
+    # Spec revision-1 section 6: dev-only local copy of the final
+    # AnalysisResult, named output-<id>-<timestamp>.json.
+    result = AnalysisResult(id="post-1", status=Status.OK, video_summary="a summary")
+
+    _dump_result_for_dev(result, str(tmp_path))
+
+    files = list(tmp_path.glob("output-post-1-*.json"))
+    assert len(files) == 1
+    assert files[0].name.endswith(".json")
+    # YYYYMMDDTHHMMSS between the id and the extension.
+    timestamp = files[0].stem.removeprefix("output-post-1-")
+    assert len(timestamp) == 15
+    assert timestamp[8] == "T"
+    written = json.loads(files[0].read_text(encoding="utf-8"))
+    assert written["id"] == "post-1"
+    assert written["status"] == "ok"
+    assert written["video_summary"] == "a summary"
+
+
+def test_dump_result_for_dev_logs_warning_and_swallows_write_failure(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    result = AnalysisResult(id="post-1", status=Status.OK)
+
+    with (
+        patch("main.Path.write_text", side_effect=OSError("disk full")),
+        caplog.at_level(logging.WARNING),
+    ):
+        _dump_result_for_dev(result, str(tmp_path))  # must not raise
+
+    assert "post-1" in caplog.text
+    assert "disk full" in caplog.text
+
+
+def test_run_once_dumps_result_to_local_file_when_dev_dump_output_enabled(
+    tmp_path: Path,
+) -> None:
+    request = AnalysisRequest(id="post-1", platform=Platform.TWITTER, text="teks asli")
+    fake_msg = object()
+    consumer = MagicMock()
+    consumer.poll_requests.return_value = ([request], fake_msg)
+    producer = MagicMock()
+
+    processed = run_once(
+        consumer, producer, _deps(), dev_dump_output=True, output_dir=str(tmp_path)
+    )
+
+    assert processed is True
+    files = list(tmp_path.glob("output-post-1-*.json"))
+    assert len(files) == 1
+
+
+def test_run_once_does_not_dump_when_dev_dump_output_disabled(tmp_path: Path) -> None:
+    request = AnalysisRequest(id="post-1", platform=Platform.TWITTER, text="teks asli")
+    fake_msg = object()
+    consumer = MagicMock()
+    consumer.poll_requests.return_value = ([request], fake_msg)
+    producer = MagicMock()
+
+    processed = run_once(
+        consumer, producer, _deps(), dev_dump_output=False, output_dir=str(tmp_path)
+    )
+
+    assert processed is True
+    assert list(tmp_path.glob("*.json")) == []
+
+
+def test_run_once_still_publishes_and_commits_when_dev_dump_write_fails(
+    tmp_path: Path,
+) -> None:
+    # The dev dump is a best-effort side write -- a failure there must
+    # never block the Kafka publish or the offset commit (spec revision-1
+    # section 6).
+    request = AnalysisRequest(id="post-1", platform=Platform.TWITTER, text="teks asli")
+    fake_msg = object()
+    consumer = MagicMock()
+    consumer.poll_requests.return_value = ([request], fake_msg)
+    producer = MagicMock()
+
+    with patch("main.Path.write_text", side_effect=OSError("disk full")):
+        processed = run_once(
+            consumer, producer, _deps(), dev_dump_output=True, output_dir=str(tmp_path)
+        )
+
+    assert processed is True
+    producer.publish.assert_called_once()
+    consumer.commit.assert_called_once_with(fake_msg)

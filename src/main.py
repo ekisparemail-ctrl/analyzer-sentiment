@@ -1,6 +1,8 @@
 import logging
 import time
+from datetime import datetime
 from functools import partial
+from pathlib import Path
 
 from ai.llm_client import LLMConfig, analyze_sentiment, summarize_video
 from ai.vlm_client import VLMConfig
@@ -8,7 +10,7 @@ from config import Settings
 from messaging.consumer import KafkaRequestConsumer
 from messaging.producer import KafkaResultProducer
 from pipeline.analyze import AnalyzeDependencies, analyze
-from schemas import Status
+from schemas import AnalysisResult, Status
 from video.analyzer import analyze_video, load_models
 from video.downloader import download_video
 
@@ -66,11 +68,31 @@ def _log_result(request_id: str, status: Status, error: str | None) -> None:
         logger.error("Processed request %s: status=%s error=%s", request_id, status, error)
 
 
+def _dump_result_for_dev(result: AnalysisResult, output_dir: str) -> None:
+    """
+    Dev-only, best-effort local copy of a processed item's final
+    AnalysisResult (spec revision-1 section 6) -- additional to, never
+    instead of, the Kafka publish. Any failure here (disk full,
+    permissions, etc.) is logged and swallowed: it must never fail the
+    item's processing or block the publish that follows.
+    """
+    try:
+        dump_dir = Path(output_dir)
+        dump_dir.mkdir(parents=True, exist_ok=True)
+        timestamp = datetime.now().strftime("%Y%m%dT%H%M%S")
+        dump_path = dump_dir / f"output-{result.id}-{timestamp}.json"
+        dump_path.write_text(result.model_dump_json(indent=2), encoding="utf-8")
+    except Exception as e:
+        logger.warning("Failed to write dev dump for request %s: %s", result.id, e)
+
+
 def run_once(
     consumer: KafkaRequestConsumer,
     producer: KafkaResultProducer,
     deps: AnalyzeDependencies,
     poll_timeout: float = 1.0,
+    dev_dump_output: bool = False,
+    output_dir: str = "output",
 ) -> bool:
     """
     One Kafka message can now yield several requests (the post itself plus
@@ -90,6 +112,8 @@ def run_once(
             current_id = request.id
             result = analyze(request, deps)
             _log_result(request.id, result.status, result.error)
+            if dev_dump_output:
+                _dump_result_for_dev(result, output_dir)
             producer.publish(result)
         consumer.commit(msg)
     except Exception as e:
@@ -105,6 +129,8 @@ def run_forever(
     consumer: KafkaRequestConsumer,
     producer: KafkaResultProducer,
     deps: AnalyzeDependencies,
+    dev_dump_output: bool = False,
+    output_dir: str = "output",
 ) -> None:
     """
     Runs run_once() forever. A KeyboardInterrupt (Ctrl-C) stops the loop
@@ -120,7 +146,13 @@ def run_forever(
     try:
         while True:
             try:
-                processed = run_once(consumer, producer, deps)
+                processed = run_once(
+                    consumer,
+                    producer,
+                    deps,
+                    dev_dump_output=dev_dump_output,
+                    output_dir=output_dir,
+                )
                 now = time.monotonic()
                 if processed:
                     last_heartbeat = now
@@ -180,7 +212,7 @@ def main() -> None:
         "Kafka consumer/producer ready (consumer_group=%s); entering poll loop.",
         settings.kafka_consumer_group,
     )
-    run_forever(consumer, producer, deps)
+    run_forever(consumer, producer, deps, dev_dump_output=settings.dev_dump_output)
 
 
 if __name__ == "__main__":
