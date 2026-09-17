@@ -40,7 +40,8 @@ class Settings(BaseSettings):
     # trade-off is acceptable once real latency is measured (spec section 9).
     max_frames: int = 8
     # Grayscale mean-absolute-difference a candidate frame must exceed vs.
-    # the previous *kept* candidate to be considered a keyframe.
+    # the previous candidate considered (not the previously kept keyframe)
+    # to be considered a keyframe.
     # video-analyzer hardcodes this at 10.0 and never actually reads its own
     # analysis_threshold/min_difference config keys -- keeping this
     # configurable avoids repeating that bug.
@@ -54,8 +55,8 @@ class Settings(BaseSettings):
     ffmpeg_hwaccel_cuda: bool = False
 
     # When true, keyframes are grouped into batches of vlm_batch_size and
-    # sent as separate multi-image VLM calls; when false, every keyframe
-    # goes into its own call instead.
+    # sent as separate multi-image VLM calls; when false, every keyframe is
+    # sent together in a single call instead.
     vlm_batch_enabled: bool = True
     # Keyframes per batch when vlm_batch_enabled is true; ignored otherwise.
     # Starting default balances per-call payload size against round trips to

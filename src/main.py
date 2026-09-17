@@ -100,7 +100,10 @@ def run_once(
     are analyzed and published before the single underlying offset is
     committed, so a failure partway through leaves the offset uncommitted
     and the whole message (including already-published items) is retried
-    next time, rather than silently losing the rest of the batch.
+    next time, rather than silently losing the rest of the batch. When
+    dev_dump_output is enabled, each result is also written locally to
+    output_dir as output-<id>-<timestamp>.json before it is published --
+    this is gated, best-effort, and never raises on failure.
     """
     polled = consumer.poll_requests(poll_timeout)
     if polled is None:
