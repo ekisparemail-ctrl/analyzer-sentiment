@@ -4,13 +4,8 @@ httpx>=0.27,<1
 confluent-kafka>=2.4,<3
 yt-dlp>=2024.8.6
 faster-whisper>=1.0,<2
-# torch>=2.6 required: fixes CVE-2025-32434 (torch.load RCE, still exploitable
-# under weights_only=True on earlier versions -- transformers' from_pretrained
-# uses torch.load internally for non-safetensors checkpoints).
-torch>=2.6,<3
-# AutoProcessor for llava-onevision pulls in AutoVideoProcessor, which
-# requires torchvision even though we only ever pass images, not video.
-# >=0.28 avoids CVE-2025-27516/CVE-2025-50182 in earlier torchvision releases.
-torchvision>=0.28,<1
-transformers>=4.45,<5
 pillow>=10.3,<11
+# Already present transitively today; made a direct dependency now that
+# nothing else in the tree will pull it in once torch/transformers are gone
+# -- used directly for the grayscale keyframe-difference scoring.
+numpy>=1.26,<3
