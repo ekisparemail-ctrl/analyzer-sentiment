@@ -86,12 +86,33 @@ def test_extract_frames_returns_empty_list_when_no_candidate_clears_threshold(
 ) -> None:
     # Known edge case (spec revision-1 section 3.1 step 5): a visually static
     # clip can produce zero keyframes -- this must be a valid result, not an
-    # error, so video/analyzer.py can degrade to transcript-only.
+    # error, so video/analyzer.py can degrade to transcript-only. Each
+    # candidate is scored against the *previous candidate* (not a fixed
+    # reference), so this holds as long as every consecutive step stays
+    # below threshold, even though the values drift a little over time.
     monkeypatch.setattr("video.frames.subprocess.run", _fake_run_factory([100, 105, 102, 101]))
 
     result = extract_frames("/tmp/video.mp4", max_frames=5, diff_threshold=50.0)
 
     assert result == []
+
+
+def test_extract_frames_scores_each_candidate_against_the_previous_candidate(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Regression test for matching video-analyzer's frame.py exactly: the
+    # comparison reference advances to the current candidate after every
+    # scoring, kept or not -- it does NOT stick to the last *kept* frame.
+    # 0 -> 40: diff 40, below threshold, not kept, reference advances to 40.
+    # 40 -> 80: diff 40, below threshold, not kept (even though 80 differs
+    #   from the last *kept* value -- there is none yet -- by 80, which
+    #   would clear the threshold under a "compare vs. last kept" scheme).
+    # 80 -> 200: diff 120, clears threshold, kept.
+    monkeypatch.setattr("video.frames.subprocess.run", _fake_run_factory([0, 40, 80, 200]))
+
+    result = extract_frames("/tmp/video.mp4", max_frames=5, diff_threshold=50.0)
+
+    assert len(result) == 1
 
 
 def test_extract_frames_keeps_candidate_when_score_exceeds_threshold(

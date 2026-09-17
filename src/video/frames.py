@@ -37,12 +37,14 @@ def extract_frames(
 
     ffmpeg extracts up to `max_frames * CANDIDATE_OVERSAMPLE_FACTOR`
     candidate frames, evenly spaced. Each candidate is scored against the
-    previously *kept* candidate (not the previous candidate) and kept only
-    if its score exceeds `diff_threshold`, capped at `max_frames`. A
-    visually static video can legitimately produce zero keyframes -- this
-    returns an empty list in that case rather than raising; callers must
-    treat that as a valid, non-error outcome (spec revision-1 section
-    3.1 step 5).
+    immediately preceding candidate (matching video-analyzer's own
+    frame.py exactly -- its `prev_frame` is reassigned unconditionally
+    after every comparison, whether or not the candidate cleared the
+    threshold) and kept only if its score exceeds `diff_threshold`, capped
+    at `max_frames`. A visually static video can legitimately produce zero
+    keyframes -- this returns an empty list in that case rather than
+    raising; callers must treat that as a valid, non-error outcome (spec
+    revision-1 section 3.1 step 5).
     """
     duration = _probe_duration_seconds(video_path)
     candidate_count = max_frames * CANDIDATE_OVERSAMPLE_FACTOR
@@ -89,9 +91,13 @@ def _select_keyframes(
 ) -> list[bytes]:
     """
     The first candidate seeds the comparison reference but is never itself
-    counted as a keyframe (there is nothing earlier to diff it against);
-    every later candidate is scored against the previously *kept* frame
-    (falling back to the seed while nothing has been kept yet).
+    counted as a keyframe (there is nothing earlier to diff it against).
+    Every later candidate is scored against the *immediately preceding
+    candidate* -- the reference always advances to the current candidate
+    after scoring, regardless of whether it was kept -- matching
+    video-analyzer's own frame.py exactly (its `prev_frame = frame.copy()`
+    runs unconditionally after every comparison, not only when the
+    candidate clears the threshold).
     """
     if not candidates:
         return []
@@ -103,7 +109,7 @@ def _select_keyframes(
             break
         if _grayscale_diff_score(reference, candidate) > diff_threshold:
             kept.append(candidate)
-            reference = candidate
+        reference = candidate
     return kept
 
 
