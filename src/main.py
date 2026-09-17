@@ -3,6 +3,7 @@ import time
 from functools import partial
 
 from ai.llm_client import LLMConfig, analyze_sentiment, summarize_video
+from ai.vlm_client import VLMConfig
 from config import Settings
 from messaging.consumer import KafkaRequestConsumer
 from messaging.producer import KafkaResultProducer
@@ -17,12 +18,27 @@ logger = logging.getLogger(__name__)
 
 def build_dependencies(settings: Settings) -> AnalyzeDependencies:
     """
-    Loads the local faster-whisper and VLM models once. Both run in-process,
-    CPU-only, on this same machine -- neither is exercised in unit tests
-    (real model weights, slow to download/load; see plan Global Constraints).
+    Loads the local faster-whisper model once (CPU-only, this machine has no
+    GPU) -- not exercised in unit tests (real model weights, slow to
+    download/load; see plan Global Constraints). The VLM is a remote HTTP
+    call (ai/vlm_client.py) again, same LM Studio instance as the LLM but a
+    separate config entry (spec revision-1 section 2).
     """
+    vlm_config = VLMConfig(
+        base_url=settings.vlm_base_url,
+        model=settings.vlm_model,
+        timeout_seconds=settings.http_timeout_seconds,
+        retry_attempts=settings.retry_attempts,
+        retry_backoff_seconds=settings.retry_backoff_seconds,
+    )
     analyzer_models = load_models(
-        settings.vlm_model_id, settings.whisper_model_size, settings.whisper_vad_filter
+        vlm_config,
+        settings.whisper_model_size,
+        settings.whisper_vad_filter,
+        vlm_batch_enabled=settings.vlm_batch_enabled,
+        vlm_batch_size=settings.vlm_batch_size,
+        keyframe_diff_threshold=settings.keyframe_diff_threshold,
+        ffmpeg_hwaccel_cuda=settings.ffmpeg_hwaccel_cuda,
     )
     llm_config = LLMConfig(
         base_url=settings.llm_base_url,
@@ -134,9 +150,10 @@ def _log_startup_banner(settings: Settings) -> None:
         settings.kafka_result_topic,
     )
     logger.info(
-        "Models in use -- vlm_model_id=%s whisper_model_size=%s whisper_vad_filter=%s "
-        "llm_model=%s llm_base_url=%s max_frames=%s max_tokens=%s",
-        settings.vlm_model_id,
+        "Models in use -- vlm_base_url=%s vlm_model=%s whisper_model_size=%s "
+        "whisper_vad_filter=%s llm_model=%s llm_base_url=%s max_frames=%s max_tokens=%s",
+        settings.vlm_base_url,
+        settings.vlm_model,
         settings.whisper_model_size,
         settings.whisper_vad_filter,
         settings.llm_model,

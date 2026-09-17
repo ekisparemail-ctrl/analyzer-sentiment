@@ -1,6 +1,15 @@
+import math
+
 import pytest
 
-from video.analyzer import AnalyzerModels, VideoAnalysisError, analyze_video
+from ai.vlm_client import VLMConfig
+from video.analyzer import AnalyzerModels, VideoAnalysisError, _summarize_frames, analyze_video
+
+
+def _vlm_config(**overrides: object) -> VLMConfig:
+    defaults = dict(base_url="http://localhost:1234/v1", model="test-vlm-model")
+    defaults.update(overrides)
+    return VLMConfig(**defaults)  # type: ignore[arg-type]
 
 
 def _models(
@@ -83,3 +92,81 @@ def test_analyze_video_degrades_gracefully_when_only_transcription_fails() -> No
     assert result.summary == "a summary"
     assert result.transcript is None
     assert result.transcript_segments is None
+
+
+# --- batched VLM calls (spec revision-1 section 3.2) ---
+
+
+def test_summarize_frames_calls_describe_images_once_per_batch(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[list[str]] = []
+
+    def fake_describe_images(config: VLMConfig, prompt: str, images: list[str]) -> str:
+        calls.append(images)
+        return f"batch of {len(images)}"
+
+    monkeypatch.setattr("video.analyzer.describe_images", fake_describe_images)
+    frames = [f"frame{i}" for i in range(10)]
+
+    _summarize_frames(frames, "Describe.", _vlm_config(), vlm_batch_enabled=True, vlm_batch_size=4)
+
+    assert len(calls) == math.ceil(10 / 4)
+
+
+def test_summarize_frames_uses_a_single_call_when_batching_is_disabled(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[list[str]] = []
+
+    def fake_describe_images(config: VLMConfig, prompt: str, images: list[str]) -> str:
+        calls.append(images)
+        return "one big batch"
+
+    monkeypatch.setattr("video.analyzer.describe_images", fake_describe_images)
+    frames = [f"frame{i}" for i in range(7)]
+
+    _summarize_frames(
+        frames, "Describe.", _vlm_config(), vlm_batch_enabled=False, vlm_batch_size=4
+    )
+
+    assert len(calls) == 1
+    assert len(calls[0]) == 7
+
+
+def test_summarize_frames_joins_batch_descriptions_chronologically_with_frame_ranges(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def fake_describe_images(config: VLMConfig, prompt: str, images: list[str]) -> str:
+        return f"desc-{images[0]}"
+
+    monkeypatch.setattr("video.analyzer.describe_images", fake_describe_images)
+    frames = ["f0", "f1", "f2", "f3", "f4"]
+
+    result = _summarize_frames(
+        frames, "Describe.", _vlm_config(), vlm_batch_enabled=True, vlm_batch_size=2
+    )
+
+    assert result == (
+        "[Frames 1-2] desc-f0\n\n[Frames 3-4] desc-f2\n\n[Frames 5-5] desc-f4"
+    )
+
+
+def test_summarize_frames_returns_empty_string_and_skips_the_vlm_for_zero_keyframes(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    called = False
+
+    def fake_describe_images(config: VLMConfig, prompt: str, images: list[str]) -> str:
+        nonlocal called
+        called = True
+        return "should not happen"
+
+    monkeypatch.setattr("video.analyzer.describe_images", fake_describe_images)
+
+    result = _summarize_frames(
+        [], "Describe.", _vlm_config(), vlm_batch_enabled=True, vlm_batch_size=4
+    )
+
+    assert result == ""
+    assert called is False

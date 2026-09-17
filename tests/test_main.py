@@ -50,14 +50,16 @@ def test_log_startup_banner_reports_the_models_in_use(
         kafka_bootstrap_servers="172.16.16.100:21000",
         llm_base_url="http://localhost:1234/v1",
         llm_model="test-llm-model",
-        vlm_model_id="llava-hf/llava-onevision-qwen2-0.5b-ov-hf",
+        vlm_base_url="http://localhost:5678/v1",
+        vlm_model="test-vlm-model",
         whisper_model_size="base",
     )
 
     with caplog.at_level(logging.INFO):
         _log_startup_banner(settings)
 
-    assert "llava-hf/llava-onevision-qwen2-0.5b-ov-hf" in caplog.text
+    assert "http://localhost:5678/v1" in caplog.text
+    assert "test-vlm-model" in caplog.text
     assert "base" in caplog.text
     assert "test-llm-model" in caplog.text
     assert "scrapper-to-analysis" in caplog.text
