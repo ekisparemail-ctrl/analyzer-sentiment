@@ -65,7 +65,7 @@ def test_log_startup_banner_reports_the_models_in_use(
 
 def test_run_once_returns_false_and_does_nothing_when_no_message_polled() -> None:
     consumer = MagicMock()
-    consumer.poll_request.return_value = None
+    consumer.poll_requests.return_value = None
     producer = MagicMock()
 
     processed = run_once(consumer, producer, _deps())
@@ -79,7 +79,7 @@ def test_run_once_analyzes_publishes_and_commits_when_message_polled() -> None:
     request = AnalysisRequest(id="1", platform=Platform.TWITTER, text="teks asli")
     fake_msg = object()
     consumer = MagicMock()
-    consumer.poll_request.return_value = (request, fake_msg)
+    consumer.poll_requests.return_value = ([request], fake_msg)
     producer = MagicMock()
 
     processed = run_once(consumer, producer, _deps())
@@ -91,11 +91,34 @@ def test_run_once_analyzes_publishes_and_commits_when_message_polled() -> None:
     consumer.commit.assert_called_once_with(fake_msg)
 
 
+def test_run_once_processes_every_request_from_one_message_and_commits_once() -> None:
+    # Regression test: the Scrapper Backend stopped publishing each comment
+    # as its own top-level message -- one Kafka message (e.g. a post plus
+    # its nested comments) can now yield several requests, all of which
+    # must be analyzed and published before the single underlying offset
+    # is committed.
+    post = AnalysisRequest(id="post-1", platform=Platform.TIKTOK, text="post asli")
+    comment_1 = AnalysisRequest(id="comment-1", platform=Platform.TIKTOK, text="komentar 1")
+    comment_2 = AnalysisRequest(id="comment-2", platform=Platform.TIKTOK, text="komentar 2")
+    fake_msg = object()
+    consumer = MagicMock()
+    consumer.poll_requests.return_value = ([post, comment_1, comment_2], fake_msg)
+    producer = MagicMock()
+
+    processed = run_once(consumer, producer, _deps())
+
+    assert processed is True
+    assert producer.publish.call_count == 3
+    published_ids = [call.args[0].id for call in producer.publish.call_args_list]
+    assert published_ids == ["post-1", "comment-1", "comment-2"]
+    consumer.commit.assert_called_once_with(fake_msg)
+
+
 def test_run_once_does_not_commit_when_publish_raises() -> None:
     request = AnalysisRequest(id="1", platform=Platform.TWITTER, text="teks asli")
     fake_msg = object()
     consumer = MagicMock()
-    consumer.poll_request.return_value = (request, fake_msg)
+    consumer.poll_requests.return_value = ([request], fake_msg)
     producer = MagicMock()
     producer.publish.side_effect = PublishError("boom")
 
@@ -103,6 +126,22 @@ def test_run_once_does_not_commit_when_publish_raises() -> None:
         run_once(consumer, producer, _deps())
 
     producer.publish.assert_called_once()
+    consumer.commit.assert_not_called()
+
+
+def test_run_once_stops_processing_further_requests_when_one_publish_raises() -> None:
+    post = AnalysisRequest(id="post-1", platform=Platform.TIKTOK, text="post asli")
+    comment_1 = AnalysisRequest(id="comment-1", platform=Platform.TIKTOK, text="komentar 1")
+    fake_msg = object()
+    consumer = MagicMock()
+    consumer.poll_requests.return_value = ([post, comment_1], fake_msg)
+    producer = MagicMock()
+    producer.publish.side_effect = [None, PublishError("boom")]
+
+    with pytest.raises(PublishError):
+        run_once(consumer, producer, _deps())
+
+    assert producer.publish.call_count == 2
     consumer.commit.assert_not_called()
 
 

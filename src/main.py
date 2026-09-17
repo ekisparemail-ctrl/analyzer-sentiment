@@ -56,17 +56,28 @@ def run_once(
     deps: AnalyzeDependencies,
     poll_timeout: float = 1.0,
 ) -> bool:
-    polled = consumer.poll_request(poll_timeout)
+    """
+    One Kafka message can now yield several requests (the post itself plus
+    one per nested comment, see messaging/scrapper_dto.py) -- all of them
+    are analyzed and published before the single underlying offset is
+    committed, so a failure partway through leaves the offset uncommitted
+    and the whole message (including already-published items) is retried
+    next time, rather than silently losing the rest of the batch.
+    """
+    polled = consumer.poll_requests(poll_timeout)
     if polled is None:
         return False
-    request, msg = polled
+    requests, msg = polled
+    current_id = None
     try:
-        result = analyze(request, deps)
-        _log_result(request.id, result.status, result.error)
-        producer.publish(result)
+        for request in requests:
+            current_id = request.id
+            result = analyze(request, deps)
+            _log_result(request.id, result.status, result.error)
+            producer.publish(result)
         consumer.commit(msg)
     except Exception as e:
-        logger.error("Failed to fully process request %s: %s", request.id, e)
+        logger.error("Failed to fully process request %s: %s", current_id, e)
         raise
     return True
 

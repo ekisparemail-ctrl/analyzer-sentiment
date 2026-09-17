@@ -4,7 +4,7 @@ import logging
 from confluent_kafka import Consumer, KafkaException
 from pydantic import ValidationError
 
-from messaging.scrapper_dto import NormalizedData, request_from_normalized_data
+from messaging.scrapper_dto import NormalizedData, requests_from_normalized_data
 from schemas import AnalysisRequest
 
 logger = logging.getLogger(__name__)
@@ -26,7 +26,14 @@ class KafkaRequestConsumer:
         )
         self._consumer.subscribe([topic])
 
-    def poll_request(self, timeout: float) -> tuple[AnalysisRequest, object] | None:
+    def poll_requests(self, timeout: float) -> tuple[list[AnalysisRequest], object] | None:
+        """
+        Returns every analyzable item from one Kafka message -- the post
+        itself plus one item per nested comment (see
+        messaging/scrapper_dto.py) -- and the raw message, so the caller can
+        process all of them and commit the single underlying offset once,
+        after all have been published.
+        """
         msg = self._consumer.poll(timeout)
         if msg is None:
             return None
@@ -39,7 +46,7 @@ class KafkaRequestConsumer:
                 self.commit(msg)
                 return None
             data = json.loads(msg_value.decode("utf-8"))
-            request = request_from_normalized_data(NormalizedData(**data))
+            requests = requests_from_normalized_data(NormalizedData(**data))
         except (json.JSONDecodeError, ValidationError, UnicodeDecodeError, TypeError) as e:
             # partition/offset logged so a skipped-and-committed message can
             # be found and, if the underlying bug gets fixed later, targeted
@@ -58,18 +65,19 @@ class KafkaRequestConsumer:
         # Deliberately does not log request.text/metadata content -- those
         # are user-generated post/comment data (Acme security standard:
         # never log PII / user data bodies), so only shape/size is logged.
-        logger.info(
-            "Consumed request id=%s partition=%s offset=%s platform=%s type=%s "
-            "has_video=%s text_len=%s",
-            request.id,
-            msg.partition(),
-            msg.offset(),
-            request.platform,
-            request.metadata.get("type"),
-            request.video_url is not None,
-            len(request.text) if request.text else 0,
-        )
-        return request, msg
+        for request in requests:
+            logger.info(
+                "Consumed request id=%s partition=%s offset=%s platform=%s type=%s "
+                "has_video=%s text_len=%s",
+                request.id,
+                msg.partition(),
+                msg.offset(),
+                request.platform,
+                request.metadata.get("type"),
+                request.video_url is not None,
+                len(request.text) if request.text else 0,
+            )
+        return requests, msg
 
     def commit(self, msg: object) -> None:
         try:

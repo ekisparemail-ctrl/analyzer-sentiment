@@ -25,16 +25,16 @@ def test_subscribes_to_the_scrapper_topic(monkeypatch: pytest.MonkeyPatch) -> No
     fake_consumer_instance.subscribe.assert_called_once_with([TOPIC])
 
 
-def test_poll_request_returns_none_when_nothing_polled(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_poll_requests_returns_none_when_nothing_polled(monkeypatch: pytest.MonkeyPatch) -> None:
     consumer, fake_consumer_instance = _make_consumer(monkeypatch)
     fake_consumer_instance.poll.return_value = None
 
-    result = consumer.poll_request(1.0)
+    result = consumer.poll_requests(1.0)
 
     assert result is None
 
 
-def test_poll_request_parses_valid_message(
+def test_poll_requests_parses_a_post_with_no_comments(
     monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
 ) -> None:
     consumer, fake_consumer_instance = _make_consumer(monkeypatch)
@@ -47,7 +47,6 @@ def test_poll_request_parses_valid_message(
         {
             "id": "item-1",
             "platform": "twitter",
-            "type": "POST",
             "message": "Judul post",
             "videoUrl": "https://cdn.example.com/v.mp4",
         }
@@ -55,24 +54,56 @@ def test_poll_request_parses_valid_message(
     fake_consumer_instance.poll.return_value = fake_msg
 
     with caplog.at_level(logging.INFO):
-        result = consumer.poll_request(1.0)
+        result = consumer.poll_requests(1.0)
 
     assert result is not None
-    request, msg = result
-    assert request.id == "item-1"
-    assert request.text == "Judul post"
-    assert request.video_url == "https://cdn.example.com/v.mp4"
+    requests, msg = result
+    assert len(requests) == 1
+    assert requests[0].id == "item-1"
+    assert requests[0].text == "Judul post"
+    assert requests[0].video_url == "https://cdn.example.com/v.mp4"
     assert msg is fake_msg
     fake_consumer_instance.commit.assert_not_called()
-    # partition/offset must be logged -- this is exactly what let a real
-    # incident (docs/issue-findings.md) be diagnosed as "already caught up",
-    # not "stuck", and is needed to target a manual offset reset if a
-    # skipped-and-committed message needs reprocessing after a bug fix.
     assert "partition=0" in caplog.text
     assert "offset=42" in caplog.text
 
 
-def test_poll_request_skips_and_commits_malformed_message(
+def test_poll_requests_parses_a_post_with_nested_comments(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Regression test: the Scrapper Backend stopped publishing each comment
+    # as its own top-level message -- one Kafka message can now yield
+    # multiple analyzable items (the post itself plus each nested comment).
+    consumer, fake_consumer_instance = _make_consumer(monkeypatch)
+
+    fake_msg = MagicMock()
+    fake_msg.error.return_value = None
+    fake_msg.partition.return_value = 0
+    fake_msg.offset.return_value = 73
+    fake_msg.value.return_value = json.dumps(
+        {
+            "id": "post-1",
+            "platform": "tiktok",
+            "message": "Judul post",
+            "videoUrl": "https://cdn.example.com/v.mp4",
+            "comments": [
+                {"id": "comment-1", "message": "komentar 1", "commentTo": "post-1"},
+                {"id": "comment-2", "message": "komentar 2", "commentTo": "post-1"},
+            ],
+        }
+    ).encode("utf-8")
+    fake_consumer_instance.poll.return_value = fake_msg
+
+    result = consumer.poll_requests(1.0)
+
+    assert result is not None
+    requests, msg = result
+    assert [r.id for r in requests] == ["post-1", "comment-1", "comment-2"]
+    assert msg is fake_msg
+    fake_consumer_instance.commit.assert_not_called()
+
+
+def test_poll_requests_skips_and_commits_malformed_message(
     monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
 ) -> None:
     consumer, fake_consumer_instance = _make_consumer(monkeypatch)
@@ -85,7 +116,7 @@ def test_poll_request_skips_and_commits_malformed_message(
     fake_consumer_instance.poll.return_value = fake_msg
 
     with caplog.at_level(logging.WARNING):
-        result = consumer.poll_request(1.0)
+        result = consumer.poll_requests(1.0)
 
     assert result is None
     fake_consumer_instance.commit.assert_called_once_with(message=fake_msg, asynchronous=False)
@@ -93,7 +124,7 @@ def test_poll_request_skips_and_commits_malformed_message(
     assert "offset=43" in caplog.text
 
 
-def test_poll_request_skips_and_commits_message_missing_required_id(
+def test_poll_requests_skips_and_commits_message_missing_required_id(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     consumer, fake_consumer_instance = _make_consumer(monkeypatch)
@@ -103,26 +134,26 @@ def test_poll_request_skips_and_commits_message_missing_required_id(
     fake_msg.value.return_value = json.dumps({"message": "no id field"}).encode("utf-8")
     fake_consumer_instance.poll.return_value = fake_msg
 
-    result = consumer.poll_request(1.0)
+    result = consumer.poll_requests(1.0)
 
     assert result is None
     fake_consumer_instance.commit.assert_called_once_with(message=fake_msg, asynchronous=False)
 
 
-def test_poll_request_returns_none_on_kafka_level_error(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_poll_requests_returns_none_on_kafka_level_error(monkeypatch: pytest.MonkeyPatch) -> None:
     consumer, fake_consumer_instance = _make_consumer(monkeypatch)
 
     fake_msg = MagicMock()
     fake_msg.error.return_value = "partition EOF"
     fake_consumer_instance.poll.return_value = fake_msg
 
-    result = consumer.poll_request(1.0)
+    result = consumer.poll_requests(1.0)
 
     assert result is None
     fake_consumer_instance.commit.assert_not_called()
 
 
-def test_poll_request_commits_when_msg_value_is_none(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_poll_requests_commits_when_msg_value_is_none(monkeypatch: pytest.MonkeyPatch) -> None:
     consumer, fake_consumer_instance = _make_consumer(monkeypatch)
 
     fake_msg = MagicMock()
@@ -130,7 +161,7 @@ def test_poll_request_commits_when_msg_value_is_none(monkeypatch: pytest.MonkeyP
     fake_msg.value.return_value = None
     fake_consumer_instance.poll.return_value = fake_msg
 
-    result = consumer.poll_request(1.0)
+    result = consumer.poll_requests(1.0)
 
     assert result is None
     fake_consumer_instance.commit.assert_called_once_with(message=fake_msg, asynchronous=False)
