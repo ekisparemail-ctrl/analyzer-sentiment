@@ -8,7 +8,8 @@ AI credits run out again) but the pipeline still needs to be exercised
 end-to-end against a real message. Swap SAMPLE_PAYLOAD for whatever message
 you need to replay -- paste the exact JSON as seen in Kafdrop/Kafka, camelCase
 and all (it goes through the same NormalizedData parsing real Kafka messages
-do).
+do). One payload can yield multiple analyzable items: the post itself plus
+one per entry in its "comments" array, each analyzed and printed in turn.
 
 Does NOT publish the result to the real analysis-to-scrapper topic -- it
 only prints it, so ad-hoc replays never pollute the real result stream.
@@ -26,7 +27,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
 from config import Settings  # noqa: E402
 from main import build_dependencies  # noqa: E402
-from messaging.scrapper_dto import NormalizedData, request_from_normalized_data  # noqa: E402
+from messaging.scrapper_dto import NormalizedData, requests_from_normalized_data  # noqa: E402
 from pipeline.analyze import analyze  # noqa: E402
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
@@ -37,7 +38,6 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name
 SAMPLE_PAYLOAD = {
     "id": "7684242422607482133",
     "platform": "tiktok",
-    "type": "POST",
     "message": (
         "Febrie Pegang Kartu Truf! Boyamin Pernah Dikasih 100.000 SGD?  "
         "#febrieadriansyah #korupsi #jampidsus #boyamin #uang "
@@ -58,7 +58,7 @@ SAMPLE_PAYLOAD = {
     "likes": 5525,
     "repliesCount": 292,
     "uploadedAt": "2026-09-11T11:45:14.000Z",
-    "commentTo": None,
+    "comments": [],
 }
 
 
@@ -69,22 +69,25 @@ def main() -> None:
     settings = Settings()  # type: ignore[call-arg]
     deps = build_dependencies(settings)
 
-    request = request_from_normalized_data(NormalizedData(**SAMPLE_PAYLOAD))
-    result = analyze(request, deps)
+    # One message now yields the post itself plus one request per nested
+    # comment (SAMPLE_PAYLOAD["comments"]) -- analyze and print each.
+    requests = requests_from_normalized_data(NormalizedData(**SAMPLE_PAYLOAD))
+    for request in requests:
+        result = analyze(request, deps)
 
-    # Timestamped summary in the log stream itself (not just the raw JSON
-    # dump below), so the sentiment result is visible right where it
-    # completed, alongside every other step's log line.
-    logger.info(
-        "Result for request %s: status=%s sentiment=%s (score=%s) topic=%r error=%s",
-        result.id,
-        result.status,
-        result.sentiment.label if result.sentiment else None,
-        result.sentiment.score if result.sentiment else None,
-        result.context.topic if result.context else None,
-        result.error,
-    )
-    print(json.dumps(result.model_dump(mode="json"), indent=2, ensure_ascii=False))
+        # Timestamped summary in the log stream itself (not just the raw
+        # JSON dump below), so the sentiment result is visible right where
+        # it completed, alongside every other step's log line.
+        logger.info(
+            "Result for request %s: status=%s sentiment=%s (score=%s) topic=%r error=%s",
+            result.id,
+            result.status,
+            result.sentiment.label if result.sentiment else None,
+            result.sentiment.score if result.sentiment else None,
+            result.context.topic if result.context else None,
+            result.error,
+        )
+        print(json.dumps(result.model_dump(mode="json"), indent=2, ensure_ascii=False))
 
 
 if __name__ == "__main__":

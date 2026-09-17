@@ -309,8 +309,8 @@ Scrapper BE            Analytics Backend (project ini, semua lokal)          Mac
     │ 1. publish request           │                                            │
     │   (Kafka: topic request)     │                                            │
     ├─────────────────────────────►│                                            │
-    │                              │ 2. consumer.poll_request()                 │
-    │                              │    -> AnalysisRequest                      │
+    │                              │ 2. consumer.poll_requests()                │
+    │                              │    -> [AnalysisRequest] (post + comments)  │
     │                              │                                            │
     │                              │ 3. jika video_url ada:                     │
     │                              │    a. download_video() (yt-dlp)            │
@@ -329,10 +329,17 @@ Scrapper BE            Analytics Backend (project ini, semua lokal)          Mac
     │                              │◄────────────────────────────────────────────┤ sentiment/
     │                              │                                            │  emotion/motivation
     │                              │ 6. producer.publish(AnalysisResult)        │
-    │  7. consume hasil            │    lalu consumer.commit(msg)               │
-    │   (Kafka: topic response)    │                                            │
-    │◄─────────────────────────────┤                                            │
+    │  7. consume hasil            │    (langkah 3-6 diulang untuk TIAP item    │
+    │   (Kafka: topic response)    │     dari langkah 2 -- post lalu tiap       │
+    │◄─────────────────────────────┤     comment -- baru consumer.commit(msg)   │
+    │                              │     SEKALI di akhir untuk semuanya)        │
 ```
+
+Satu pesan Kafka sekarang bisa menghasilkan lebih dari satu `AnalysisResult`
+(post + N komentar) — offset cuma di-commit setelah **semuanya** berhasil
+di-publish; kalau gagal di tengah, seluruh pesan (termasuk item yang sudah
+berhasil dipublish) akan diproses ulang saat restart (aman, `AnalysisResult`
+dikorelasikan lewat `id`, republish bukan masalah).
 
 Setiap tahap (2-6) sudah ditest terisolasi lewat unit test (lihat bagian di atas).
 Pengujian manual ini memverifikasi bahwa tahap-tahap itu benar saat dirangkai dengan
@@ -436,43 +443,59 @@ diperlukan untuk memverifikasi integrasi Kafka yang sesungguhnya.
 2. **Kirim satu pesan test** ke topic request. Payload harus cocok dengan bentuk asli
    pesan Scrapper Backend, `NormalizedData` (`src/messaging/scrapper_dto.py`,
    camelCase) — **bukan** `AnalysisRequest` langsung, itu bentuk internal setelah
-   diterjemahkan `request_from_normalized_data()`. Contoh di bawah adalah payload
-   **nyata** yang pernah tertangkap di produksi (topic `scrapper-to-analysis`,
-   partition 0, offset 73, 2026-09-16) — dipakai juga sebagai satu-satunya
-   contoh acuan di seluruh project ini (lihat juga
-   `tests/messaging/test_scrapper_dto.py`'s
-   `test_parses_real_payload_captured_from_scrapper_be` dan
-   `scripts/replay_sample_payload.py`, yang memutar payload persis ini lewat
-   seluruh pipeline tanpa Kafka sama sekali):
+   diterjemahkan `requests_from_normalized_data()` (satu pesan Kafka sekarang bisa
+   menghasilkan **beberapa** `AnalysisRequest`: post-nya sendiri + satu per
+   komentar bersarang). Contoh di bawah adalah payload **nyata** yang pernah
+   tertangkap di produksi (`docs/to-do.md`, 2026-09-17, sudah termasuk satu
+   komentar bersarang) — dipakai juga sebagai satu-satunya contoh acuan di
+   seluruh project ini (lihat juga `tests/messaging/test_scrapper_dto.py`'s
+   `test_parses_real_payload_with_nested_comment_captured_from_scrapper_be`):
    ```json
    {
      "id": "7685758857540275463",
      "platform": "tiktok",
-     "type": "POST",
      "message": "KPK Tangkap 17 Orang Termasuk Dirjen ATR/BPN #ott #korupsi #kpk",
      "url": "https://www.tiktok.com/@kompas.tv.ambon/video/7685758857540275463",
-     "videoUrl": "https://v16m.tiktokcdn-us.com/d0c29d97db51a6db354a2fe27a857c87/6aaaab1a/video/tos/alisg/tos-alisg-pve-0037c001/oEyT7AfBUqEQTTR2Epg4IeFEsqKFwqpVDUBUBU/?a=1233&bti=NEBzNTY6QGo6OjZALnAjNDQuYCMxNDNg&&bt=198&ft=arR-Iq4fmr2PD12lJU-I3wUEI7JUMeF~O5&mime_type=video_mp4&rc=ZDRmaWg7OWk5OmRpOGYzNUBpajhrcnc5cmRuZDMzODczNEAtNTViNF5hNTIxMV8yYy8xYSM2cDRoMmRjbWhhLS1kMTFzcw%3D%3D&vvpl=1&l=2026091608361478C3BF2E06E59D10F481&btag=e000d0000",
+     "videoUrl": "https://v19.tiktokcdn-us.com/085fdfbadbdd79956ba5178c1b555120/6aaba853/video/tos/alisg/tos-alisg-pve-0037c001/oEyT7AfBUqEQTTR2Epg4IeFEsqKFwqpVDUBUBU/?a=1233&bti=NEBzNTY6QGo6OjZALnAjNDQuYCMxNDNg&&bt=198",
      "imageUrl": null,
      "authorUsername": "kompas.tv.ambon",
      "authorName": "Kompas tv Ambon",
-     "views": 39291,
-     "likes": 1036,
-     "repliesCount": 91,
+     "views": 47196,
+     "likes": 1377,
+     "repliesCount": 128,
      "uploadedAt": "2026-09-15T13:49:53.000Z",
-     "commentTo": null
+     "comments": [
+       {
+         "id": "7685801363246236437",
+         "message": "10+5=17",
+         "url": null,
+         "authorUsername": "sayfuladam7",
+         "authorName": null,
+         "likes": 1,
+         "repliesCount": 0,
+         "uploadedAt": "2026-09-15T16:34:47.000Z",
+         "commentTo": "7685758857540275463"
+       }
+     ]
    }
    ```
    Catatan: `uploadedAt` di sini sengaja string ISO (bukan epoch integer) --
-   ini bentuk asli yang dikirim Scrapper Backend untuk sebagian item, sudah
-   ditangani (`messaging/scrapper_dto.py`'s `_normalize_uploaded_at`). `videoUrl`-nya
-   adalah link CDN langsung (bukan URL halaman TikTok) -- itu sebabnya
-   `video/downloader.py` men-generate nama file sendiri alih-alih memakai
-   `%(id)s` hasil ekstraksi yt-dlp (lihat riwayat commit-nya kalau perlu detail).
+   ini bentuk asli yang dikirim Scrapper Backend untuk sebagian item (post
+   maupun komentar), sudah ditangani (`messaging/scrapper_dto.py`'s
+   `_normalize_uploaded_at`). `videoUrl`-nya adalah link CDN langsung (bukan
+   URL halaman TikTok) -- itu sebabnya `video/downloader.py` men-generate
+   nama file sendiri alih-alih memakai `%(id)s` hasil ekstraksi yt-dlp (lihat
+   riwayat commit-nya kalau perlu detail). Field `type`/`commentTo` di level
+   atas pernah ada di versi payload sebelumnya tapi sudah dihapus Scrapper
+   Backend -- jangan heran kalau tidak melihatnya lagi.
 
-   Hapus/ubah `message` dan `videoUrl` untuk menguji jalur teks-saja atau
-   video-saja secara terpisah — lihat kombinasi yang relevan di
-   `tests/pipeline/test_analyze.py` sebagai referensi skenario yang perlu dicoba
-   (teks+video, video-saja, teks-saja, video gagal, dst).
+   Untuk pesan ini, kamu akan melihat **dua** `AnalysisResult` dipublish
+   (id `7685758857540275463` untuk post-nya, id `7685801363246236437` untuk
+   komentarnya) dari satu pesan Kafka yang sama. Hapus/ubah `message`,
+   `videoUrl`, atau `comments` untuk menguji kombinasi lain — lihat skenario
+   yang relevan di `tests/pipeline/test_analyze.py` (teks+video, video-saja,
+   teks-saja, video gagal, dst) dan `tests/messaging/test_consumer.py`/
+   `tests/test_main.py` untuk skenario post+komentar.
 
    Cara paling sederhana mengirim pesan tanpa tooling tambahan: skrip Python kecil
    pakai `confluent-kafka` yang sudah ada di `venv` project ini:
@@ -484,16 +507,13 @@ diperlukan untuk memverifikasi integrasi Kafka yang sesungguhnya.
    payload = {
        "id": "7685758857540275463",
        "platform": "tiktok",
-       "type": "POST",
        "message": "KPK Tangkap 17 Orang Termasuk Dirjen ATR/BPN #ott #korupsi #kpk",
        "videoUrl": (
-           "https://v16m.tiktokcdn-us.com/d0c29d97db51a6db354a2fe27a857c87/6aaaab1a/"
+           "https://v19.tiktokcdn-us.com/085fdfbadbdd79956ba5178c1b555120/6aaba853/"
            "video/tos/alisg/tos-alisg-pve-0037c001/oEyT7AfBUqEQTTR2Epg4IeFEsqKFwqpVDUBUBU/"
            "?a=1233&bti=NEBzNTY6QGo6OjZALnAjNDQuYCMxNDNg&&bt=198"
-           "&ft=arR-Iq4fmr2PD12lJU-I3wUEI7JUMeF~O5&mime_type=video_mp4"
-           "&rc=ZDRmaWg7OWk5OmRpOGYzNUBpajhrcnc5cmRuZDMzODczNEAtNTViNF5hNTIxMV8yYy8xYSM2cDRoMmRj"
-           "bWhhLS1kMTFzcw%3D%3D&vvpl=1&l=2026091608361478C3BF2E06E59D10F481&btag=e000d0000"
        ),
+       "comments": [{"id": "7685801363246236437", "message": "10+5=17"}],
    }
    p.produce(
        "scrapper-to-analysis", key=payload["id"].encode(), value=json.dumps(payload).encode()

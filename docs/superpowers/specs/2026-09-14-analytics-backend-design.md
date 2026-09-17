@@ -122,8 +122,8 @@ src/
   config.py            # env-based settings (Kafka, LLM base url+model, VLM model id, whisper model size, frame/timeout/retry settings)
   schemas.py           # pydantic models: AnalysisRequest, AnalysisResult, internal DTOs
   messaging/
-    scrapper_dto.py     # wire-format model matching the Scrapper Backend's real Kafka message (NormalizedData) + translation into AnalysisRequest
-    consumer.py        # Kafka consume wrapper: subscribes to the single scrapper topic, translates via scrapper_dto.py
+    scrapper_dto.py     # wire-format model matching the Scrapper Backend's real Kafka message (NormalizedData, with nested comments) + translation into a list of AnalysisRequest (one per post/comment)
+    consumer.py        # Kafka consume wrapper: subscribes to the single scrapper topic, translates via scrapper_dto.py, returns every request from one message
     producer.py         # Kafka publish wrapper
   pipeline/
     analyze.py          # use-case orchestrator: optional text/video -> summary -> sentiment result
@@ -218,7 +218,7 @@ flowchart TD
 
     subgraph AB["Analytics Backend (this project)"]
         Consumer["messaging/consumer.py<br/>KafkaRequestConsumer"]
-        Translate["messaging/scrapper_dto.py<br/>NormalizedData to AnalysisRequest"]
+        Translate["messaging/scrapper_dto.py<br/>NormalizedData to AnalysisRequest[]"]
         Pipeline["pipeline/analyze.py<br/>analyze()"]
         HasVideo{"video_url present?"}
         Download["video/downloader.py<br/>download_video() - yt-dlp"]
@@ -269,36 +269,46 @@ those.
 
 ### Steps
 
-**Revised twice now: the Scrapper Backend's real Kafka contract was confirmed
-by reading its source directly** (see `messaging/scrapper_dto.py`). It
-originally published to two separate topics with two separate DTOs
+**Revised three times now: the Scrapper Backend's real Kafka contract was
+confirmed by reading its source directly** (see `messaging/scrapper_dto.py`).
+It originally published to two separate topics with two separate DTOs
 (`post-scrapper-to-analysis`/`NormalizedPostDto` and
-`comment-scrapper-to-analysis`/`NormalizedCommentDto`); the Scrapper Backend
-then merged these into a single topic and a single unified DTO, described
-below (the two-topic version is no longer current — see §9 for the exact
-commit that changed this).
+`comment-scrapper-to-analysis`/`NormalizedCommentDto`); it then merged these
+into a single topic and a single DTO with an explicit `type` field
+(`"POST"`/`"COMMENT"`/`"REPLY"`); as of 2026-09-17 it dropped that `type`
+field (and the top-level `commentTo`) and instead **nests a post's comments
+directly inside its own message** as a `comments` array, described below (see
+§9 for revision history). This means **one Kafka message can now yield
+several analyzable items** — the post itself plus one per nested comment —
+where it used to always be exactly one.
 
 1. Consumer subscribes to the **single** topic the Scrapper Backend
    publishes to (Quarkus/SmallRye, confirmed from its `application.yml`):
-   `scrapper-to-analysis` (`NormalizedDataDto`), which now carries an
-   explicit `platform` field (populated into `AnalysisRequest.platform`,
-   normalizing case — the Scrapper Backend's own `Platform` enum
-   inconsistently serializes Facebook as `"Facebook"` while every other
-   platform is lowercase) and a `type` field (`"POST"` / `"COMMENT"` /
-   `"REPLY"`, carried through in `metadata`, not used for branching).
-   `messaging/scrapper_dto.py` translates it into our internal
-   `AnalysisRequest { id, text: str | None, video_url: str | None,
-   platform: Platform | None, metadata: dict }`: `message` becomes
-   `text`, `videoUrl` becomes `video_url` (passed through as-is
-   regardless of `type` — no assumption is made that only posts carry
-   video). Other DTO fields (`url`, `imageUrl`, `authorUsername`,
-   `authorName`, `views`, `likes`, `repliesCount`, `uploadedAt`,
-   `commentTo`) are carried through in `metadata` for traceability;
+   `scrapper-to-analysis` (`NormalizedDataDto`), which carries an explicit
+   `platform` field (populated into `AnalysisRequest.platform`, normalizing
+   case — the Scrapper Backend's own `Platform` enum inconsistently
+   serializes Facebook as `"Facebook"` while every other platform is
+   lowercase) and a `comments` array of nested comment objects (each with
+   its own `id`/`message`/`authorUsername`/etc., no `platform` of its own).
+   `messaging/scrapper_dto.py`'s `requests_from_normalized_data()` translates
+   one message into a **list** of `AnalysisRequest { id, text: str | None,
+   video_url: str | None, platform: Platform | None, metadata: dict }`: the
+   post itself (`message` becomes `text`, `videoUrl` becomes `video_url`),
+   followed by one per nested comment (`message` becomes `text`,
+   `video_url` always `None` — only posts carry video; inherits the parent
+   post's `platform`, since comments don't carry their own). Other DTO
+   fields (`url`, `imageUrl`, `authorUsername`, `authorName`, `views`,
+   `likes`, `repliesCount`, `uploadedAt`, and for comments `commentTo`) are
+   carried through in each request's `metadata` for traceability, along
+   with a `type: "POST"`/`"COMMENT"` tag **we** synthesize from structural
+   position (the wire format no longer provides this, but it's still useful
+   for our own logs — see `messaging/consumer.py`'s per-request log line).
    `imageUrl` is not otherwise processed (no image-only analysis path
    exists — out of scope unless requested). Malformed messages
    (parse/validation failure) are logged and skipped (committed, not
    retried).
-2. `pipeline.analyze(request)`:
+2. `main.py`'s `run_once()` loops over **every** request from step 1 (the
+   post, then each comment) and, for each, calls `pipeline.analyze(request)`:
    - If `video_url` is present:
      1. Download it (`video/downloader.py`).
      2. Run it through `video/analyzer.py`:
@@ -320,23 +330,28 @@ commit that changed this).
    - Otherwise, call `ai/llm_client.py` with a structured prompt (adapted
      from the n8n reference prompt) to produce sentiment, emotion, and
      motivation analysis.
-3. Results are assembled into an `AnalysisResult`, correlated to the
-   original item via `id`, and published to the response topic.
-4. The consumer commits the offset only after a successful publish
-   (at-least-once delivery).
+3. Each result is assembled into an `AnalysisResult`, correlated to its own
+   item via `id` (the post's own `id`, or a comment's `id`), and published
+   to the response topic immediately — one publish per item, not batched.
+4. The consumer commits the **one** underlying Kafka offset only after
+   *every* item from that message has been published successfully
+   (at-least-once delivery) — a failure partway through (e.g. the second of
+   three comments) leaves the offset uncommitted, so the whole message,
+   including the already-published items, is retried next time. Re-publishing
+   an already-succeeded item is harmless (correlated by `id`, not appended);
+   this was judged simpler than tracking partial-batch progress per message.
 
 ### Message schemas
 
 **Incoming (confirmed against the Scrapper Backend's real source — see §9 for
 what's still open):**
 
-`scrapper-to-analysis` topic (`NormalizedDataDto`) — merged from the
-earlier separate post/comment topics/DTOs:
+`scrapper-to-analysis` topic (`NormalizedDataDto`) — a post, with its
+comments nested inside (as of 2026-09-17; see §9 for the field history):
 ```json
 {
   "id": "string",
   "platform": "twitter | tiktok | instagram | Facebook | ...",
-  "type": "POST | COMMENT | REPLY",
   "message": "string | null",
   "url": "string | null",
   "videoUrl": "string | null",
@@ -346,16 +361,31 @@ earlier separate post/comment topics/DTOs:
   "views": 0,
   "likes": 0,
   "repliesCount": 0,
-  "uploadedAt": 0,
-  "commentTo": "string | null"
+  "uploadedAt": "0 | ISO-8601 string",
+  "comments": [
+    {
+      "id": "string",
+      "message": "string | null",
+      "url": "string | null",
+      "authorUsername": "string | null",
+      "authorName": "string | null",
+      "likes": 0,
+      "repliesCount": 0,
+      "uploadedAt": "0 | ISO-8601 string",
+      "commentTo": "string | null"
+    }
+  ]
 }
 ```
 
 `platform` (note the real, observed inconsistent casing for Facebook above)
-maps to `AnalysisRequest.platform`; unrecognized/absent values degrade to
-`None` rather than rejecting the message. `type`/`commentTo` and the other
-fields not otherwise consumed are carried through in `AnalysisRequest.metadata`
-(see §5 Steps).
+maps to `AnalysisRequest.platform` for the post and every comment (comments
+don't carry their own); unrecognized/absent values degrade to `None` rather
+than rejecting the message. `uploadedAt` (post and comment) is sometimes an
+epoch integer, sometimes an ISO-8601 string — normalized to epoch seconds,
+or `None` if neither parses (see §9). Fields not otherwise consumed are
+carried through in each resulting `AnalysisRequest.metadata`, along with a
+`type: "POST"`/`"COMMENT"` tag we synthesize ourselves (see §5 Steps).
 
 Outgoing result — schema unaffected by the above (this is our own
 `AnalysisResult` shape, published to a topic name that is **still a
@@ -496,17 +526,34 @@ local VLM's load cost at startup.
   cluster. It must be supplied to the service via config/env (e.g.
   `KAFKA_BOOTSTRAP_SERVERS`), never hardcoded in source.
 - **Incoming Kafka topic name and message contract are confirmed, and have
-  already changed once** — read directly from the Scrapper Backend's
-  source (`C:\Users\kacang\IdeaProjects\scrapping-be`). Originally two
-  topics/DTOs (`post-scrapper-to-analysis`/`NormalizedPostDto`,
-  `comment-scrapper-to-analysis`/`NormalizedCommentDto`); as of the
-  Scrapper Backend's commit `599c58c` ("All works except consume from
-  analitics to sentimen be"), merged into one topic `scrapper-to-
-  analysis` and one DTO `NormalizedDataDto` (adds `platform` and `type`
-  fields that didn't exist before). See §5 for the current confirmed
-  shape. **Lesson learned: re-verify against the Scrapper Backend's
-  actual source before assuming this contract is still stable** — it is
-  still under active development by someone else.
+  already changed twice** — read directly from the Scrapper Backend's
+  source where possible, otherwise from real captured payloads
+  (`docs/to-do.md`). Revision history:
+  1. Originally two topics/DTOs (`post-scrapper-to-analysis`/
+     `NormalizedPostDto`, `comment-scrapper-to-analysis`/
+     `NormalizedCommentDto`).
+  2. Scrapper Backend commit `599c58c` ("All works except consume from
+     analitics to sentimen be") merged these into one topic
+     `scrapper-to-analysis` and one DTO `NormalizedDataDto`, adding
+     `platform` and `type` (`"POST"`/`"COMMENT"`/`"REPLY"`) fields.
+  3. As of 2026-09-17, the Scrapper Backend dropped `type` and the
+     top-level `commentTo`, and instead nests a post's comments directly
+     inside its own message as a `comments` array — a comment is no
+     longer its own top-level message at all. This changed the
+     translation from "one message -> one `AnalysisRequest`" to "one
+     message -> a **list** of `AnalysisRequest`s" (see §5 Steps,
+     `messaging/scrapper_dto.py`'s `requests_from_normalized_data()`).
+     Silent failure mode this could have caused: pydantic ignores
+     unrecognized fields by default, so the old model wouldn't have
+     crashed on the new shape — it would have silently dropped every
+     nested comment with no error at all. Caught by the user pasting a
+     real captured payload rather than by a runtime error.
+
+  See §5 for the current confirmed shape. **Lesson learned (again):
+  re-verify against the Scrapper Backend's actual source/real payloads
+  before assuming this contract is still stable** — it is still under
+  active development by someone else, and has changed three times so
+  far without warning.
 - **Outgoing (result) topic name is finalized on our side: `analysis-to-
   scrapper`** (`kafka_result_topic` in `config.py`) — this is our topic
   to name, the same way the Scrapper Backend named its own topic. What's
@@ -600,8 +647,9 @@ local VLM's load cost at startup.
 - Supported video platforms assumed: TikTok, Instagram, Facebook,
   Twitter/X, matching the platforms referenced in
   `docs/references/Analyst_Batches.json`.
-- **A real `scrapper-to-analysis` message was captured in production**
-  (`docs/to-do.md`) and parses correctly end-to-end against the current
-  `NormalizedData`/`request_from_normalized_data` schema with no changes
-  needed — locked in as a regression test
-  (`test_parses_real_payload_captured_from_scrapper_be`).
+- **Real `scrapper-to-analysis` messages have been captured in production
+  more than once** (`docs/to-do.md`) and locked in as regression tests
+  (`test_parses_real_payload_captured_from_scrapper_be`,
+  `test_parses_real_payload_with_nested_comment_captured_from_scrapper_be`)
+  against `NormalizedData`/`requests_from_normalized_data` — the latter
+  specifically covers the nested-comments shape (§5, §9 revision history).
