@@ -196,12 +196,19 @@ Task 3 recreates `ai/vlm_client.py` and Tasks 4/5 rewire the callers.
   `ffmpeg` extracts candidates at a higher rate than `max_frames` (spec
   revision-1 §3.1 step 1 — pick a concrete oversampling factor, e.g. 3x,
   and document why in a comment). Score each candidate against the
-  previously *kept* one (not the previous *candidate*, matching
-  `video-analyzer`'s own logic exactly — re-read its `frame.py` if
-  unsure, this distinction is easy to get backwards); keep it if the
-  score exceeds `diff_threshold`; cap total kept at `max_frames`; encode
-  kept frames as base64 `data:` URLs (same encoding revision-4 removed —
-  git history has it too, in the same deleted-code search as Task 3).
+  *immediately preceding candidate that was considered* — not the last
+  one that was *kept* — matching `video-analyzer`'s own logic exactly:
+  its `frame.py` reassigns the comparison reference unconditionally after
+  every scored candidate, whether or not that candidate cleared the
+  threshold. (**Corrected 2026-09-17, mid-implementation:** an earlier
+  version of this step said the opposite — "compare against the
+  previously kept candidate" — which was wrong; caught by re-reading
+  `video-analyzer`'s actual `frame.py` rather than trusting this
+  document. See the implementation ledger's ruling if you need the full
+  story.) Keep the candidate if its score exceeds `diff_threshold`; cap
+  total kept at `max_frames`; encode kept frames as base64 `data:` URLs
+  (same encoding revision-4 removed — git history has it too, in the
+  same deleted-code search as Task 3).
 
 - [ ] **Step 3: Handle the zero-keyframes edge case explicitly**
   Confirm (with a test) that a video producing zero keyframes returns an

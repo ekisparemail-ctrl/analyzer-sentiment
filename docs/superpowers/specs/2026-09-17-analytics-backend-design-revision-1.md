@@ -127,10 +127,19 @@ New behavior, adopting `video-analyzer`'s algorithm (its `frame.py`) but
    needing OpenCV's frame-by-frame video decode loop — `ffmpeg` remains
    the one thing doing video decode, per directive point 3.
 2. Each candidate is converted to grayscale and compared against the
-   **previously kept** candidate using mean absolute pixel difference —
-   the same metric `video-analyzer` uses (`cv2.absdiff` + `numpy.mean`).
-   Implemented with **Pillow + numpy instead of OpenCV**: `Image.convert("L")`
-   for grayscale, `numpy.abs(a.astype(int) - b.astype(int)).mean()` for the
+   **immediately preceding candidate that was considered** (not the last
+   one that was *kept*) using mean absolute pixel difference — the same
+   metric `video-analyzer` uses (`cv2.absdiff` + `numpy.mean`), and the
+   same reference-update behavior: `video-analyzer`'s own `frame.py`
+   reassigns its comparison reference (`prev_frame = frame.copy()`)
+   unconditionally after every scored candidate, whether or not that
+   candidate cleared the threshold — this spec originally mischaracterized
+   this as "compare against the previously kept candidate" (an error
+   caught during implementation by directly re-reading `video-analyzer`'s
+   source rather than trusting this document; corrected here, see the
+   implementation plan's revision-1 ledger for the ruling). Implemented
+   with **Pillow + numpy instead of OpenCV**: `Image.convert("L")` for
+   grayscale, `numpy.abs(a.astype(int) - b.astype(int)).mean()` for the
    score. Numerically equivalent; avoids adding `opencv-python` as a new
    dependency when Pillow (already a dependency) and numpy (already
    present transitively, made direct once `torch`/`transformers` are
