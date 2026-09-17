@@ -33,32 +33,41 @@ from pipeline.analyze import analyze  # noqa: E402
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 
 # Real message captured from the scrapper-to-analysis topic (docs/to-do.md,
-# 2026-09-16 07:09:15.589, partition 0 offset 12) -- a shorter (~1 min)
-# video, swapped in to keep replay runs quick during iteration.
+# 2026-09-17) -- includes one nested comment, so a replay run also exercises
+# the per-comment analysis path alongside the post itself.
 SAMPLE_PAYLOAD = {
-    "id": "7684242422607482133",
+    "id": "7685758857540275463",
     "platform": "tiktok",
-    "message": (
-        "Febrie Pegang Kartu Truf! Boyamin Pernah Dikasih 100.000 SGD?  "
-        "#febrieadriansyah #korupsi #jampidsus #boyamin #uang "
-    ),
-    "url": "https://www.tiktok.com/@opinijend/video/7684242422607482133",
+    "message": "KPK Tangkap 17 Orang Termasuk Dirjen ATR/BPN #ott #korupsi #kpk",
+    "url": "https://www.tiktok.com/@kompas.tv.ambon/video/7685758857540275463",
     "videoUrl": (
-        "https://v19.tiktokcdn-us.com/340d670c838c0a55317bca04194193ff/6aaa953c/video/tos/"
-        "alisg/tos-alisg-pve-0037c001/oc4JRs4jLQs8I64DEVeAKmDoFVfgACdKeIwjlQ/"
-        "?a=1233&bti=NEBzNTY6QGo6OjZALnAjNDQuYCMxNDNg&&bt=567"
-        "&ft=WgSBMNTYVUywUytrzLnq2Ef5SxYnD1PXtFksencyqF_4&mime_type=video_mp4"
-        "&rc=ODdkNWhmaGZmM2llNjQ0NEBpMzhyOm45cjh4ZDMzODczNEA1XzJiMV4vNi0xNF8vX2FfYSNvNjBfMmRj"
-        "Z2VhLS1kMWBzcw%3D%3D&vvpl=1&l=202609160709039A2F2E99CE5DB00FF157&btag=e000d0000"
+        "https://v19.tiktokcdn-us.com/085fdfbadbdd79956ba5178c1b555120/6aaba853/video/tos/"
+        "alisg/tos-alisg-pve-0037c001/oEyT7AfBUqEQTTR2Epg4IeFEsqKFwqpVDUBUBU/"
+        "?a=1233&bti=NEBzNTY6QGo6OjZALnAjNDQuYCMxNDNg&&bt=198"
+        "&ft=arR-IqgmmklPD12cbW-I3wURSa3qjeF~O5&mime_type=video_mp4"
+        "&rc=ZDRmaWg7OWk5OmRpOGYzNUBpajhrcnc5cmRuZDMzODczNEAtNTViNF5hNTIxMV8yYy8xYSM2cDRoMmRj"
+        "bWhhLS1kMTFzcw%3D%3D&vvpl=1&l=20260917023639D137C72DF5E6A13EE9BC&btag=e000a0000"
     ),
     "imageUrl": None,
-    "authorUsername": "opinijend",
-    "authorName": "OpiniJend",
-    "views": 286252,
-    "likes": 5525,
-    "repliesCount": 292,
-    "uploadedAt": "2026-09-11T11:45:14.000Z",
-    "comments": [],
+    "authorUsername": "kompas.tv.ambon",
+    "authorName": "Kompas tv Ambon",
+    "views": 47196,
+    "likes": 1377,
+    "repliesCount": 128,
+    "uploadedAt": "2026-09-15T13:49:53.000Z",
+    "comments": [
+        {
+            "id": "7685801363246236437",
+            "message": "10+5=17",
+            "url": None,
+            "authorUsername": "sayfuladam7",
+            "authorName": None,
+            "likes": 1,
+            "repliesCount": 0,
+            "uploadedAt": "2026-09-15T16:34:47.000Z",
+            "commentTo": "7685758857540275463",
+        }
+    ],
 }
 
 
