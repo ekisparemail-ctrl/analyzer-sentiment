@@ -25,6 +25,13 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
+# Real analyzed content (comments especially) routinely contains emoji and
+# other characters outside Windows' legacy console codepage (cp1252) --
+# without this, printing such a result crashes with UnicodeEncodeError after
+# the item has already been fully processed (see docs/issue-findings.md).
+if sys.stdout.encoding is not None and sys.stdout.encoding.lower() != "utf-8":
+    sys.stdout.reconfigure(encoding="utf-8")
+
 from config import Settings  # noqa: E402
 from main import _dump_result_for_dev, build_dependencies  # noqa: E402
 from messaging.scrapper_dto import NormalizedData, requests_from_normalized_data  # noqa: E402
@@ -32,40 +39,53 @@ from pipeline.analyze import analyze  # noqa: E402
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 
-# Real message captured from the scrapper-to-analysis topic (docs/to-do.md,
+# Real message captured from the scrapper-to-analysis topic (docs/issue-findings.md,
 # 2026-09-17) -- includes one nested comment, so a replay run also exercises
-# the per-comment analysis path alongside the post itself.
+# the per-comment analysis path alongside the post itself. NOTE: the videoUrl
+# below is a signed TikTok CDN link with a short-lived token -- if this
+# script starts getting HTTP 403 on download again, the token has expired
+# and this payload needs replacing with a freshly captured one (see
+# docs/issue-findings.md for the pattern this keeps hitting).
 SAMPLE_PAYLOAD = {
-    "id": "7685758857540275463",
+    "id": "7685921933191400705",
     "platform": "tiktok",
-    "message": "KPK Tangkap 17 Orang Termasuk Dirjen ATR/BPN #ott #korupsi #kpk",
-    "url": "https://www.tiktok.com/@kompas.tv.ambon/video/7685758857540275463",
+    "message": (
+        "Komisi Pemberantasan Korupsi menetapkan delapan orang tersangka dalam kasus "
+        "dugaan korupsi pengurusan hak guna bangunan atau HGB di lingkungan Kementerian "
+        "Agraria dan Tata Ruang/Badan Pertanahan Nasional (ATR/BPN), hasil operasi "
+        "tangkap tangan di sejumlah lokasi. KPK menyita barang bukti uang mencapai "
+        "lebih dari 106 miliar rupiah. #liputan6sctv #newssctv #emtekmedianews #kpk "
+        "#korupsi"
+    ),
+    "url": "https://www.tiktok.com/@liputan6/video/7685921933191400705",
     "videoUrl": (
-        "https://v19.tiktokcdn-us.com/085fdfbadbdd79956ba5178c1b555120/6aaba853/video/tos/"
-        "alisg/tos-alisg-pve-0037c001/oEyT7AfBUqEQTTR2Epg4IeFEsqKFwqpVDUBUBU/"
-        "?a=1233&bti=NEBzNTY6QGo6OjZALnAjNDQuYCMxNDNg&&bt=198"
-        "&ft=arR-IqgmmklPD12cbW-I3wURSa3qjeF~O5&mime_type=video_mp4"
-        "&rc=ZDRmaWg7OWk5OmRpOGYzNUBpajhrcnc5cmRuZDMzODczNEAtNTViNF5hNTIxMV8yYy8xYSM2cDRoMmRj"
-        "bWhhLS1kMTFzcw%3D%3D&vvpl=1&l=20260917023639D137C72DF5E6A13EE9BC&btag=e000a0000"
+        "https://v77.tiktokcdn.com/bf4562d5c9dcaed3a935cc729f174fe0/6aacee16/video/tos/"
+        "alisg/tos-alisg-pve-0037/ocAXMK4RAiEYus1p3aBBYVPgyl6qQnAjAi0Iz/"
+        "?a=1233&bti=NEBzNTY6QGo6OjZALnAjNDQuYCMxNDNg&&bt=857"
+        "&ft=EKpu4FZ-00gA12NvoMwnzIxRlbVclQ_45SY&mime_type=video_mp4"
+        "&rc=NzY7ZTs7O2ZlZDk4NGlkO0BpM25manQ5cnF4ZDMzODgzNEAyXjY2YS8wXzMxYy40MC0wYSMyLmJu"
+        "MmQ0LmhhLS1kLzFzcw%3D%3D&vvpl=1&l=2026091715511232142DF53097B7C6ED8A&btag=e00090000"
     ),
     "imageUrl": None,
-    "authorUsername": "kompas.tv.ambon",
-    "authorName": "Kompas tv Ambon",
-    "views": 47196,
-    "likes": 1377,
-    "repliesCount": 128,
-    "uploadedAt": "2026-09-15T13:49:53.000Z",
+    "authorUsername": "liputan6",
+    "authorName": "Liputan6",
+    "views": 544455,
+    "likes": 10890,
+    "repliesCount": 920,
+    "uploadedAt": "2026-09-16T00:22:51.000Z",
     "comments": [
         {
-            "id": "7685801363246236437",
-            "message": "10+5=17",
+            "id": "7685923821383566101",
+            "message": "prabowo\U0001f970",
             "url": None,
-            "authorUsername": "sayfuladam7",
+            "videoUrl": None,
+            "imageUrl": None,
+            "authorUsername": "reserse61",
             "authorName": None,
-            "likes": 1,
-            "repliesCount": 0,
-            "uploadedAt": "2026-09-15T16:34:47.000Z",
-            "commentTo": "7685758857540275463",
+            "likes": 283,
+            "repliesCount": 15,
+            "uploadedAt": "2026-09-16T00:30:12.000Z",
+            "commentTo": "7685921933191400705",
         }
     ],
 }
